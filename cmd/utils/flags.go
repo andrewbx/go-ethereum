@@ -140,6 +140,10 @@ var (
 		Usage:    "Ethereum mainnet",
 		Category: flags.EthCategory,
 	}
+	PulseChainFlag = &cli.BoolFlag{
+		Name:  "pulsechain",
+		Usage: "PulseChain mainnet",
+	}
 	GoerliFlag = &cli.BoolFlag{
 		Name:     "goerli",
 		Usage:    "Görli network: pre-configured proof-of-authority test network",
@@ -155,6 +159,11 @@ var (
 		Usage:    "Holesky network: pre-configured proof-of-stake test network",
 		Category: flags.EthCategory,
 	}
+	PulseChainTestnetFlag = &cli.BoolFlag{
+		Name:  "pulsechain-testnet",
+		Usage: "PulseChain testnet",
+	}
+
 	// Dev mode
 	DeveloperFlag = &cli.BoolFlag{
 		Name:     "dev",
@@ -916,9 +925,13 @@ var (
 		GoerliFlag,
 		SepoliaFlag,
 		HoleskyFlag,
+		PulseChainTestnetFlag,
 	}
 	// NetworkFlags is the flag group of all built-in supported networks.
-	NetworkFlags = append([]cli.Flag{MainnetFlag}, TestnetFlags...)
+	NetworkFlags = append([]cli.Flag{
+		MainnetFlag,
+		PulseChainFlag,
+	}, TestnetFlags...)
 
 	// DatabaseFlags is the flag group of all database flags.
 	DatabaseFlags = []cli.Flag{
@@ -936,6 +949,9 @@ var (
 // then a subdirectory of the specified datadir will be used.
 func MakeDataDir(ctx *cli.Context) string {
 	if path := ctx.String(DataDirFlag.Name); path != "" {
+		if ctx.Bool(PulseChainFlag.Name) {
+			return filepath.Join(path, "pulsechain")
+		}
 		if ctx.Bool(GoerliFlag.Name) {
 			return filepath.Join(path, "goerli")
 		}
@@ -944,6 +960,9 @@ func MakeDataDir(ctx *cli.Context) string {
 		}
 		if ctx.Bool(HoleskyFlag.Name) {
 			return filepath.Join(path, "holesky")
+		}
+		if ctx.Bool(PulseChainTestnetFlag.Name) {
+			return filepath.Join(path, "pulsechain-testnet")
 		}
 		return path
 	}
@@ -1001,12 +1020,16 @@ func setBootstrapNodes(ctx *cli.Context, cfg *p2p.Config) {
 			return // Already set by config file, don't apply defaults.
 		}
 		switch {
+		case ctx.Bool(PulseChainFlag.Name):
+			urls = params.PulseChainBootnodes
 		case ctx.Bool(HoleskyFlag.Name):
 			urls = params.HoleskyBootnodes
 		case ctx.Bool(SepoliaFlag.Name):
 			urls = params.SepoliaBootnodes
 		case ctx.Bool(GoerliFlag.Name):
 			urls = params.GoerliBootnodes
+		case ctx.Bool(PulseChainTestnetFlag.Name):
+			urls = params.PulseChainTestnetBootnodes
 		}
 	}
 	cfg.BootstrapNodes = mustParseBootnodes(urls)
@@ -1428,12 +1451,16 @@ func SetDataDir(ctx *cli.Context, cfg *node.Config) {
 		cfg.DataDir = ctx.String(DataDirFlag.Name)
 	case ctx.Bool(DeveloperFlag.Name):
 		cfg.DataDir = "" // unless explicitly requested, use memory databases
+	case ctx.Bool(PulseChainFlag.Name) && cfg.DataDir == node.DefaultDataDir():
+		cfg.DataDir = filepath.Join(node.DefaultDataDir(), "pulsechain")
 	case ctx.Bool(GoerliFlag.Name) && cfg.DataDir == node.DefaultDataDir():
 		cfg.DataDir = filepath.Join(node.DefaultDataDir(), "goerli")
 	case ctx.Bool(SepoliaFlag.Name) && cfg.DataDir == node.DefaultDataDir():
 		cfg.DataDir = filepath.Join(node.DefaultDataDir(), "sepolia")
 	case ctx.Bool(HoleskyFlag.Name) && cfg.DataDir == node.DefaultDataDir():
 		cfg.DataDir = filepath.Join(node.DefaultDataDir(), "holesky")
+	case ctx.Bool(PulseChainTestnetFlag.Name) && cfg.DataDir == node.DefaultDataDir():
+		cfg.DataDir = filepath.Join(node.DefaultDataDir(), "pulsechain-testnet")
 	}
 }
 
@@ -1585,7 +1612,7 @@ func CheckExclusive(ctx *cli.Context, args ...interface{}) {
 // SetEthConfig applies eth-related command line flags to the config.
 func SetEthConfig(ctx *cli.Context, stack *node.Node, cfg *ethconfig.Config) {
 	// Avoid conflicting network flags
-	CheckExclusive(ctx, MainnetFlag, DeveloperFlag, GoerliFlag, SepoliaFlag, HoleskyFlag)
+	CheckExclusive(ctx, MainnetFlag, PulseChainFlag, DeveloperFlag, GoerliFlag, SepoliaFlag, HoleskyFlag, PulseChainTestnetFlag)
 	CheckExclusive(ctx, DeveloperFlag, ExternalSignerFlag) // Can't use both ephemeral unlocked and external signer
 
 	// Set configurations from CLI flags
@@ -1736,6 +1763,12 @@ func SetEthConfig(ctx *cli.Context, stack *node.Node, cfg *ethconfig.Config) {
 		}
 		cfg.Genesis = core.DefaultGenesisBlock()
 		SetDNSDiscoveryDefaults(cfg, params.MainnetGenesisHash)
+	case ctx.Bool(PulseChainFlag.Name):
+		if !ctx.IsSet(NetworkIdFlag.Name) {
+			cfg.NetworkId = 369
+		}
+		cfg.Genesis = core.DefaultPulseChainGenesisBlock()
+		SetDNSDiscoveryDefaults(cfg, params.MainnetGenesisHash)
 	case ctx.Bool(HoleskyFlag.Name):
 		if !ctx.IsSet(NetworkIdFlag.Name) {
 			cfg.NetworkId = 17000
@@ -1754,6 +1787,12 @@ func SetEthConfig(ctx *cli.Context, stack *node.Node, cfg *ethconfig.Config) {
 		}
 		cfg.Genesis = core.DefaultGoerliGenesisBlock()
 		SetDNSDiscoveryDefaults(cfg, params.GoerliGenesisHash)
+	case ctx.Bool(PulseChainTestnetFlag.Name):
+		if !ctx.IsSet(NetworkIdFlag.Name) {
+			cfg.NetworkId = 942
+		}
+		cfg.Genesis = core.DefaultPulseChainTestnetGenesisBlock()
+		SetDNSDiscoveryDefaults(cfg, params.MainnetGenesisHash)
 	case ctx.Bool(DeveloperFlag.Name):
 		if !ctx.IsSet(NetworkIdFlag.Name) {
 			cfg.NetworkId = 1337
@@ -2057,12 +2096,16 @@ func MakeGenesis(ctx *cli.Context) *core.Genesis {
 	switch {
 	case ctx.Bool(MainnetFlag.Name):
 		genesis = core.DefaultGenesisBlock()
+	case ctx.Bool(PulseChainFlag.Name):
+		genesis = core.DefaultPulseChainGenesisBlock()
 	case ctx.Bool(HoleskyFlag.Name):
 		genesis = core.DefaultHoleskyGenesisBlock()
 	case ctx.Bool(SepoliaFlag.Name):
 		genesis = core.DefaultSepoliaGenesisBlock()
 	case ctx.Bool(GoerliFlag.Name):
 		genesis = core.DefaultGoerliGenesisBlock()
+	case ctx.Bool(PulseChainTestnetFlag.Name):
+		genesis = core.DefaultPulseChainTestnetGenesisBlock()
 	case ctx.Bool(DeveloperFlag.Name):
 		Fatalf("Developer chains are ephemeral")
 	}

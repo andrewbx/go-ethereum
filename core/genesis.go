@@ -498,6 +498,18 @@ func DefaultGenesisBlock() *Genesis {
 	}
 }
 
+// DefaultPulseChainGenesisBlock returns the PulseChain mainnet genesis block.
+func DefaultPulseChainGenesisBlock() *Genesis {
+	return &Genesis{
+		Config:     params.PulseChainConfig,
+		Nonce:      66,
+		ExtraData:  hexutil.MustDecode("0x11bbe8db4e347b4e8c937c1c8370e4b5ed33adb3db69cbdb7a38e1e50b1b82fa"),
+		GasLimit:   5000,
+		Difficulty: big.NewInt(17179869184),
+		Alloc:      decodePrealloc(mainnetAllocData),
+	}
+}
+
 // DefaultGoerliGenesisBlock returns the Görli network genesis block.
 func DefaultGoerliGenesisBlock() *Genesis {
 	return &Genesis{
@@ -532,6 +544,18 @@ func DefaultHoleskyGenesisBlock() *Genesis {
 		Difficulty: big.NewInt(0x01),
 		Timestamp:  1695902100,
 		Alloc:      decodePrealloc(holeskyAllocData),
+	}
+}
+
+// DefaultPulseChainTestnetGenesisBlock returns the PulseChain testnet genesis block.
+func DefaultPulseChainTestnetGenesisBlock() *Genesis {
+	return &Genesis{
+		Config:     params.PulseChainTestnetConfig,
+		Nonce:      66,
+		ExtraData:  hexutil.MustDecode("0x11bbe8db4e347b4e8c937c1c8370e4b5ed33adb3db69cbdb7a38e1e50b1b82fa"),
+		GasLimit:   5000,
+		Difficulty: big.NewInt(17179869184),
+		Alloc:      decodePrealloc(mainnetAllocData),
 	}
 }
 
