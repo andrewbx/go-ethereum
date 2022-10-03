@@ -12,6 +12,14 @@ type Treasury struct {
 	Balance *math.HexOrDecimal256 `json:"balance"`
 }
 
+// A trivially small amount of work to add to the Ethereum Mainnet TTD
+// to allow for un-merging and merging with the PulseChain beacon chain
+var PulseChainTTDOffset = big.NewInt(131_072)
+
+// This value is defined as LAST_ACTUAL_MAINNET_TTD + PulseChainTTDOffset
+// where LAST_ACTUAL_MAINNET_TTD = 58_750_003_716_598_352_816_469
+var PulseChainTerminalTotalDifficulty, _ = new(big.Int).SetString("58_750_003_716_598_352_947_541", 0)
+
 var (
 	PulseChainConfig = &ChainConfig{
 		ChainID:                       big.NewInt(369),
@@ -30,7 +38,7 @@ var (
 		LondonBlock:                   big.NewInt(12_965_000),
 		ArrowGlacierBlock:             big.NewInt(13_773_000),
 		GrayGlacierBlock:              big.NewInt(15_050_000),
-		TerminalTotalDifficulty:       MainnetTerminalTotalDifficulty, // 58_750_000_000_000_000_000_000
+		TerminalTotalDifficulty:       PulseChainTerminalTotalDifficulty,
 		TerminalTotalDifficultyPassed: true,
 		Ethash:                        new(EthashConfig),
 		PrimordialPulseBlock:          big.NewInt(15_700_000), // TODO: UPDATE FORK BLOCK
@@ -53,7 +61,7 @@ var (
 		LondonBlock:                   big.NewInt(12_965_000),
 		ArrowGlacierBlock:             big.NewInt(13_773_000),
 		GrayGlacierBlock:              big.NewInt(15_050_000),
-		TerminalTotalDifficulty:       MainnetTerminalTotalDifficulty, // 58_750_000_000_000_000_000_000
+		TerminalTotalDifficulty:       PulseChainTerminalTotalDifficulty,
 		TerminalTotalDifficultyPassed: true,
 		Ethash:                        new(EthashConfig),
 		PrimordialPulseBlock:          big.NewInt(15_700_000), // TODO: UPDATE FORK BLOCK
