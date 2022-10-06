@@ -13,7 +13,7 @@ import (
 	"github.com/holiman/uint256"
 )
 
-func TestPrimordialPulse(t *testing.T) {
+func TestApplySacrificeCredits(t *testing.T) {
 	// Init
 	var pulseChainTestnetTreasuryBalance math.HexOrDecimal256
 	pulseChainTestnetTreasuryBalance.UnmarshalText([]byte("0xC9F2C9CD04674EDEA40000000"))
@@ -26,7 +26,7 @@ func TestPrimordialPulse(t *testing.T) {
 	}
 
 	// Exec
-	PrimordialPulse(state, treasury)
+	applySacrificeCredits(state, treasury)
 
 	// Verify
 	actual := state.GetBalance(common.HexToAddress(treasury.Addr))
@@ -46,13 +46,5 @@ func TestPrimordialPulse(t *testing.T) {
 		t.Errorf("Invalid sacrifice credit balance, actual: %d, expected: %d", actual, expected)
 	} else {
 		t.Log("Sacrifice allocation successful")
-	}
-
-	actualStorage := state.GetState(newDepositContractAddress, common.HexToHash(storage[0][0]))
-	expectedStorage := common.HexToHash(storage[0][1])
-	if actualStorage != expectedStorage {
-		t.Errorf("Invalid storage entry, actual: %d, expected: %d", actualStorage, expectedStorage)
-	} else {
-		t.Log("Valid Storage entry")
 	}
 }
