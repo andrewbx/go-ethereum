@@ -38,8 +38,8 @@ func TestApplySacrificeCredits(t *testing.T) {
 	}
 
 	// from the credits.csv file in compressed-allocations
-	actual = state.GetBalance(common.HexToAddress("0x0000000000000000000000000000000000001010"))
-	bal, _ := new(big.Int).SetString("5977597164464952199640526", 10)
+	actual = state.GetBalance(common.HexToAddress("0x000000005dCEE11e13fb536Fa40d65450F53c5a8"))
+	bal, _ := new(big.Int).SetString("64000000000000000000", 10)
 	expected = uint256.MustFromBig(bal)
 
 	if actual.Cmp(expected) != 0 {
