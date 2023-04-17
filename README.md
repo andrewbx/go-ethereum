@@ -115,12 +115,12 @@ use separate accounts for play and real money. Unless you manually move
 accounts, `geth` will by default correctly separate the two networks and will not make any
 accounts available between them.*
 
-### **Full node on PulseChain Testnet V3**
+### **Full node on PulseChain Testnet V4**
 
-To connect to the PulseChain Testnet V3:
+To connect to the PulseChain Testnet V4:
 
 ```shell
-$ geth --pulsechain-testnet-v3 console
+$ geth --pulsechain-testnet-v4 console
 ```
 
 ### Configuration
@@ -149,7 +149,7 @@ Docker:
 ```shell
 docker run -d --name pulsechain-execution-node -v /Users/alice/pulse:/root \
            -p 8545:8545 -p 30303:30303 \
-           registry.gitlab.com/pulsechaincom/go-pulse --pulsechain-testnet-v3
+           registry.gitlab.com/pulsechaincom/go-pulse --pulsechain-testnet-v4
 ```
 
 This will start `geth` in snap-sync mode with a DB memory allowance of 1GB, as the
