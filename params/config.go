@@ -449,7 +449,7 @@ func (c *ChainConfig) Description() string {
 		banner += fmt.Sprintf(" - Gray Glacier:                #%-8v (https://github.com/ethereum/execution-specs/blob/master/network-upgrades/mainnet-upgrades/gray-glacier.md)\n", c.GrayGlacierBlock)
 	}
 	if c.PrimordialPulseBlock != nil {
-		banner += fmt.Sprintf(" - Primordial Pulse:            %-8v (https://gitlab.com/pulsechaincom/go-pulse)\n", c.PrimordialPulseBlock)
+		banner += fmt.Sprintf(" - Primordial Pulse:            #%-8v (https://gitlab.com/pulsechaincom/go-pulse)\n", c.PrimordialPulseBlock)
 	}
 	banner += "\n"
 
@@ -567,7 +567,15 @@ func (c *ChainConfig) IsTerminalPoWBlock(parentTotalDiff *big.Int, totalDiff *bi
 
 // IsShanghai returns whether time is either equal to the Shanghai fork time or greater.
 func (c *ChainConfig) IsShanghai(num *big.Int, time uint64) bool {
-	return c.IsLondon(num) && isTimestampForked(c.ShanghaiTime, time)
+	if !c.IsLondon(num) {
+		return false
+	}
+	if c.PrimordialPulseAhead(num) {
+		// If the PrimordialPulse fork is ahead,
+		// compare with the Ethereum Mainnet Shanghai time.
+		return 1681338455 <= time
+	}
+	return isTimestampForked(c.ShanghaiTime, time)
 }
 
 // IsCancun returns whether num is either equal to the Cancun fork time or greater.
@@ -746,7 +754,8 @@ func (c *ChainConfig) checkCompatible(newcfg *ChainConfig, headNumber *big.Int, 
 	if isForkBlockIncompatible(c.MergeNetsplitBlock, newcfg.MergeNetsplitBlock, headNumber) {
 		return newBlockCompatError("Merge netsplit fork block", c.MergeNetsplitBlock, newcfg.MergeNetsplitBlock)
 	}
-	if isForkTimestampIncompatible(c.ShanghaiTime, newcfg.ShanghaiTime, headTimestamp) {
+	// allow mismatching Shanghai time if we're on the PrimordialPulse block or if there is a PrimordialPulse block ahead
+	if isForkTimestampIncompatible(c.ShanghaiTime, newcfg.ShanghaiTime, headTimestamp) && !newcfg.IsPrimordialPulseBlock(headNumber) && !newcfg.PrimordialPulseAhead(headNumber) {
 		return newTimestampCompatError("Shanghai fork timestamp", c.ShanghaiTime, newcfg.ShanghaiTime)
 	}
 	if isForkTimestampIncompatible(c.CancunTime, newcfg.CancunTime, headTimestamp) {
