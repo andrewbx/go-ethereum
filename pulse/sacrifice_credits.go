@@ -11,14 +11,23 @@ import (
 	"github.com/holiman/uint256"
 )
 
-// The testnet credits are approximate and not final for mainnet
-// see https://gitlab.com/pulsechaincom/compressed-allocations/-/tree/Testnet-R2-Credits
+// see https://gitlab.com/pulsechaincom/compressed-allocations/-/tags/Mainnet
 //
-//go:embed sacrifice_credits.bin
-var rawCredits []byte
+//go:embed sacrifice_credits_mainnet.bin
+var mainnetRawCredits []byte
+
+// see https://gitlab.com/pulsechaincom/compressed-allocations/-/tags/Testnet-V4
+//
+//go:embed sacrifice_credits_testnet_v4.bin
+var testnetV4RawCredits []byte
 
 // Applies the sacrifice credits for the PrimordialPulse fork.
-func applySacrificeCredits(state *state.StateDB, treasury *params.Treasury) {
+func applySacrificeCredits(state *state.StateDB, treasury *params.Treasury, chainID *big.Int) {
+	rawCredits := mainnetRawCredits
+	if chainID.Cmp(params.PulseChainTestnetV4Config.ChainID) == 0 {
+		rawCredits = testnetV4RawCredits
+	}
+
 	if treasury != nil {
 		log.Info("Applying PrimordialPulse treasury allocation 💸")
 		state.AddBalance(common.HexToAddress(treasury.Addr), uint256.MustFromBig((*big.Int)(treasury.Balance)))
