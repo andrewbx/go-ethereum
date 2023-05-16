@@ -221,6 +221,7 @@ func newTestBackend(t *testing.T) (*node.Node, []*types.Block) {
 	}
 	// Create Ethereum Service
 	config := &ethconfig.Config{Genesis: genesis}
+	config.Ethash.PowMode = ethash.ModeFake
 	ethservice, err := eth.New(n, config)
 	if err != nil {
 		t.Fatalf("can't create new ethereum service: %v", err)
@@ -541,7 +542,7 @@ func testCallContractAtHash(t *testing.T, client *rpc.Client) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if gas != 21000 {
+	if gas != 25200 {
 		t.Fatalf("unexpected gas price: %v", gas)
 	}
 	block, err := ec.HeaderByNumber(context.Background(), big.NewInt(1))
@@ -568,7 +569,7 @@ func testCallContract(t *testing.T, client *rpc.Client) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if gas != 21000 {
+	if gas != 25200 {
 		t.Fatalf("unexpected gas price: %v", gas)
 	}
 	// CallContract

@@ -64,8 +64,16 @@ var (
 		utils.NoUSBFlag,
 		utils.USBFlag,
 		utils.SmartCardDaemonPathFlag,
-		utils.OverrideCancun,
+		utils.OverrideShanghai,
 		utils.EnablePersonal,
+		utils.EthashCacheDirFlag,
+		utils.EthashCachesInMemoryFlag,
+		utils.EthashCachesOnDiskFlag,
+		utils.EthashCachesLockMmapFlag,
+		utils.EthashDatasetDirFlag,
+		utils.EthashDatasetsInMemoryFlag,
+		utils.EthashDatasetsOnDiskFlag,
+		utils.EthashDatasetsLockMmapFlag,
 		utils.TxPoolLocalsFlag,
 		utils.TxPoolNoLocalsFlag,
 		utils.TxPoolJournalFlag,
@@ -107,17 +115,19 @@ var (
 		utils.CachePreimagesFlag,
 		utils.CacheLogSizeFlag,
 		utils.FDLimitFlag,
-		utils.CryptoKZGFlag,
 		utils.ListenPortFlag,
 		utils.DiscoveryPortFlag,
 		utils.MaxPeersFlag,
 		utils.MaxPendingPeersFlag,
 		utils.MiningEnabledFlag,
+		utils.MinerThreadsFlag,
+		utils.MinerNotifyFlag,
 		utils.MinerGasLimitFlag,
 		utils.MinerGasPriceFlag,
 		utils.MinerEtherbaseFlag,
 		utils.MinerExtraDataFlag,
 		utils.MinerRecommitIntervalFlag,
+		utils.MinerNoVerifyFlag,
 		utils.MinerNewPayloadTimeout,
 		utils.NATFlag,
 		utils.NoDiscoverFlag,
@@ -132,11 +142,13 @@ var (
 		utils.VMEnableDebugFlag,
 		utils.NetworkIdFlag,
 		utils.EthStatsURLFlag,
+		utils.FakePoWFlag,
 		utils.NoCompactionFlag,
 		utils.GpoBlocksFlag,
 		utils.GpoPercentileFlag,
 		utils.GpoMaxGasPriceFlag,
 		utils.GpoIgnoreGasPriceFlag,
+		utils.MinerNotifyFullFlag,
 		configFileFlag,
 	}, utils.NetworkFlags, utils.DatabasePathFlags)
 
@@ -212,6 +224,8 @@ func init() {
 		attachCommand,
 		javascriptCommand,
 		// See misccmd.go:
+		makecacheCommand,
+		makedagCommand,
 		versionCommand,
 		versionCheckCommand,
 		licenseCommand,
@@ -259,6 +273,9 @@ func main() {
 func prepare(ctx *cli.Context) {
 	// If we're running a known preset, log it for convenience.
 	switch {
+	case ctx.IsSet(utils.PulseChainFlag.Name):
+		log.Info("Starting Geth on PulseChain mainnet...")
+
 	case ctx.IsSet(utils.RinkebyFlag.Name):
 		log.Info("Starting Geth on Rinkeby testnet...")
 
@@ -267,6 +284,9 @@ func prepare(ctx *cli.Context) {
 
 	case ctx.IsSet(utils.SepoliaFlag.Name):
 		log.Info("Starting Geth on Sepolia testnet...")
+
+	case ctx.IsSet(utils.PulseChainTestnetV4Flag.Name):
+		log.Info("Starting Geth on PulseChain Testnet V4...")
 
 	case ctx.IsSet(utils.DeveloperFlag.Name):
 		log.Info("Starting Geth in ephemeral dev mode...")
@@ -296,7 +316,7 @@ func prepare(ctx *cli.Context) {
 			!ctx.IsSet(utils.RinkebyFlag.Name) &&
 			!ctx.IsSet(utils.GoerliFlag.Name) &&
 			!ctx.IsSet(utils.DeveloperFlag.Name) {
-			// Nope, we're really on mainnet. Bump that cache up!
+			// Nope, we're really on mainnet or PulseChain. Bump that cache up!
 			log.Info("Bumping default cache on mainnet", "provided", ctx.Int(utils.CacheFlag.Name), "updated", 4096)
 			ctx.Set(utils.CacheFlag.Name, strconv.Itoa(4096))
 		}
@@ -424,7 +444,9 @@ func startNode(ctx *cli.Context, stack *node.Node, backend ethapi.Backend, isCon
 		// Set the gas price to the limits from the CLI and start mining
 		gasprice := flags.GlobalBig(ctx, utils.MinerGasPriceFlag.Name)
 		ethBackend.TxPool().SetGasPrice(gasprice)
-		if err := ethBackend.StartMining(); err != nil {
+		// start mining
+		threads := ctx.Int(utils.MinerThreadsFlag.Name)
+		if err := ethBackend.StartMining(threads); err != nil {
 			utils.Fatalf("Failed to start mining: %v", err)
 		}
 	}

@@ -120,7 +120,7 @@ func (ga *GenesisAlloc) deriveHash() (common.Hash, error) {
 	// Create an ephemeral in-memory database for computing hash,
 	// all the derived states will be discarded to not pollute disk.
 	db := state.NewDatabase(rawdb.NewMemoryDatabase())
-	statedb, err := state.New(types.EmptyRootHash, db, nil)
+	statedb, err := state.New(common.Hash{}, db, nil)
 	if err != nil {
 		return common.Hash{}, err
 	}
@@ -139,7 +139,7 @@ func (ga *GenesisAlloc) deriveHash() (common.Hash, error) {
 // all the generated states will be persisted into the given database.
 // Also, the genesis state specification will be flushed as well.
 func (ga *GenesisAlloc) flush(db ethdb.Database, triedb *trie.Database, blockhash common.Hash) error {
-	statedb, err := state.New(types.EmptyRootHash, state.NewDatabaseWithNodeDB(db, triedb), nil)
+	statedb, err := state.New(common.Hash{}, state.NewDatabaseWithNodeDB(db, triedb), nil)
 	if err != nil {
 		return err
 	}
@@ -267,7 +267,7 @@ func (e *GenesisMismatchError) Error() string {
 
 // ChainOverrides contains the changes to chain config.
 type ChainOverrides struct {
-	OverrideCancun *uint64
+	OverrideShanghai *uint64
 }
 
 // SetupGenesisBlock writes or updates the genesis block in db.
@@ -293,8 +293,8 @@ func SetupGenesisBlockWithOverride(db ethdb.Database, triedb *trie.Database, gen
 	}
 	applyOverrides := func(config *params.ChainConfig) {
 		if config != nil {
-			if overrides != nil && overrides.OverrideCancun != nil {
-				config.CancunTime = overrides.OverrideCancun
+			if overrides != nil && overrides.OverrideShanghai != nil {
+				config.ShanghaiTime = overrides.OverrideShanghai
 			}
 		}
 	}
@@ -333,15 +333,22 @@ func SetupGenesisBlockWithOverride(db ethdb.Database, triedb *trie.Database, gen
 		applyOverrides(genesis.Config)
 		return genesis.Config, block.Hash(), nil
 	}
+	// Assume mainnet chainId first
+	chainId := params.MainnetChainConfig.ChainID.Uint64()
+	// Note: The `genesis` argument will be one of:
+	// - nil: if running without the `init` command and without providing a network flag (--pulsechain, --ropsten, etc..)
+	// - defaulted: when a network flag is provided (--pulsechain, --ropsten, etc..), genesis will hold the defaults
+	// - custom: if running with the `init` command supplying a custom genesis.json file, genesis will hold the file contents
 	// Check whether the genesis block is already written.
 	if genesis != nil {
+		chainId = genesis.Config.ChainID.Uint64()
 		hash := genesis.ToBlock().Hash()
 		if hash != stored {
 			return genesis.Config, hash, &GenesisMismatchError{stored, hash}
 		}
 	}
 	// Get the existing chain configuration.
-	newcfg := genesis.configOrDefault(stored)
+	newcfg := genesis.configOrDefault(stored, chainId)
 	applyOverrides(newcfg)
 	if err := newcfg.CheckConfigForkOrder(); err != nil {
 		return newcfg, common.Hash{}, err
@@ -358,7 +365,10 @@ func SetupGenesisBlockWithOverride(db ethdb.Database, triedb *trie.Database, gen
 	// chain config as that would be AllProtocolChanges (applying any new fork
 	// on top of an existing private network genesis block). In that case, only
 	// apply the overrides.
-	if genesis == nil && stored != params.MainnetGenesisHash {
+	// Added: support custom config for PrimordialPulse fork with mainnet genesis
+	// and non-standard chain id.
+	if genesis == nil && (storedcfg.PrimordialPulseBlock != nil ||
+		stored != params.MainnetGenesisHash) {
 		newcfg = storedcfg
 		applyOverrides(newcfg)
 	}
@@ -379,9 +389,11 @@ func SetupGenesisBlockWithOverride(db ethdb.Database, triedb *trie.Database, gen
 	return newcfg, stored, nil
 }
 
-// LoadChainConfig loads the stored chain config if it is already present in
-// database, otherwise, return the config in the provided genesis specification.
-func LoadChainConfig(db ethdb.Database, genesis *Genesis) (*params.ChainConfig, error) {
+// LoadCliqueConfig loads the stored clique config if the chain config
+// is already present in database, otherwise, return the config in the
+// provided genesis specification. Note the returned clique config can
+// be nil if we are not in the clique network.
+func LoadCliqueConfig(db ethdb.Database, genesis *Genesis) (*params.CliqueConfig, error) {
 	// Load the stored chain config from the database. It can be nil
 	// in case the database is empty. Notably, we only care about the
 	// chain config corresponds to the canonical chain.
@@ -389,10 +401,10 @@ func LoadChainConfig(db ethdb.Database, genesis *Genesis) (*params.ChainConfig, 
 	if stored != (common.Hash{}) {
 		storedcfg := rawdb.ReadChainConfig(db, stored)
 		if storedcfg != nil {
-			return storedcfg, nil
+			return storedcfg.Clique, nil
 		}
 	}
-	// Load the config from the provided genesis specification
+	// Load the clique config from the provided genesis specification.
 	if genesis != nil {
 		// Reject invalid genesis spec without valid chain config
 		if genesis.Config == nil {
@@ -405,19 +417,27 @@ func LoadChainConfig(db ethdb.Database, genesis *Genesis) (*params.ChainConfig, 
 		if stored != (common.Hash{}) && genesis.ToBlock().Hash() != stored {
 			return nil, &GenesisMismatchError{stored, genesis.ToBlock().Hash()}
 		}
-		return genesis.Config, nil
+		return genesis.Config.Clique, nil
 	}
 	// There is no stored chain config and no new config provided,
-	// In this case the default chain config(mainnet) will be used
-	return params.MainnetChainConfig, nil
+	// In this case the default chain config(mainnet) will be used,
+	// namely ethash is the specified consensus engine, return nil.
+	return nil, nil
 }
 
-func (g *Genesis) configOrDefault(ghash common.Hash) *params.ChainConfig {
+func (g *Genesis) configOrDefault(ghash common.Hash, chainId uint64) *params.ChainConfig {
 	switch {
 	case g != nil:
 		return g.Config
 	case ghash == params.MainnetGenesisHash:
-		return params.MainnetChainConfig
+		switch chainId {
+		case params.PulseChainConfig.ChainID.Uint64():
+			return params.PulseChainConfig
+		case params.PulseChainTestnetV4Config.ChainID.Uint64():
+			return params.PulseChainTestnetV4Config
+		default:
+			return params.MainnetChainConfig
+		}
 	case ghash == params.SepoliaGenesisHash:
 		return params.SepoliaChainConfig
 	case ghash == params.RinkebyGenesisHash:
@@ -528,6 +548,18 @@ func DefaultGenesisBlock() *Genesis {
 	}
 }
 
+// DefaultPulseChainGenesisBlock returns the PulseChain mainnet genesis block.
+func DefaultPulseChainGenesisBlock() *Genesis {
+	return &Genesis{
+		Config:     params.PulseChainConfig,
+		Nonce:      66,
+		ExtraData:  hexutil.MustDecode("0x11bbe8db4e347b4e8c937c1c8370e4b5ed33adb3db69cbdb7a38e1e50b1b82fa"),
+		GasLimit:   5000,
+		Difficulty: big.NewInt(17179869184),
+		Alloc:      decodePrealloc(mainnetAllocData),
+	}
+}
+
 // DefaultRinkebyGenesisBlock returns the Rinkeby network genesis block.
 func DefaultRinkebyGenesisBlock() *Genesis {
 	return &Genesis{
@@ -562,6 +594,18 @@ func DefaultSepoliaGenesisBlock() *Genesis {
 		Difficulty: big.NewInt(0x20000),
 		Timestamp:  1633267481,
 		Alloc:      decodePrealloc(sepoliaAllocData),
+	}
+}
+
+// DefaultPulseChainTestnetV4GenesisBlock returns the PulseChain Testnet V4 genesis block.
+func DefaultPulseChainTestnetV4GenesisBlock() *Genesis {
+	return &Genesis{
+		Config:     params.PulseChainTestnetV4Config,
+		Nonce:      66,
+		ExtraData:  hexutil.MustDecode("0x11bbe8db4e347b4e8c937c1c8370e4b5ed33adb3db69cbdb7a38e1e50b1b82fa"),
+		GasLimit:   5000,
+		Difficulty: big.NewInt(17179869184),
+		Alloc:      decodePrealloc(mainnetAllocData),
 	}
 }
 

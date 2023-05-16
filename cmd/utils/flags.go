@@ -39,13 +39,13 @@ import (
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/common/fdlimit"
 	"github.com/ethereum/go-ethereum/common/hexutil"
+	"github.com/ethereum/go-ethereum/consensus/ethash"
 	"github.com/ethereum/go-ethereum/core"
 	"github.com/ethereum/go-ethereum/core/rawdb"
 	"github.com/ethereum/go-ethereum/core/txpool"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/core/vm"
 	"github.com/ethereum/go-ethereum/crypto"
-	"github.com/ethereum/go-ethereum/crypto/kzg4844"
 	"github.com/ethereum/go-ethereum/eth"
 	ethcatalyst "github.com/ethereum/go-ethereum/eth/catalyst"
 	"github.com/ethereum/go-ethereum/eth/downloader"
@@ -101,8 +101,8 @@ var (
 	}
 	DBEngineFlag = &cli.StringFlag{
 		Name:     "db.engine",
-		Usage:    "Backing database implementation to use ('pebble' or 'leveldb')",
-		Value:    node.DefaultConfig.DBEngine,
+		Usage:    "Backing database implementation to use ('leveldb' or 'pebble')",
+		Value:    "leveldb",
 		Category: flags.EthCategory,
 	}
 	AncientFlag = &flags.DirectoryFlag{
@@ -142,6 +142,10 @@ var (
 		Usage:    "Ethereum mainnet",
 		Category: flags.EthCategory,
 	}
+	PulseChainFlag = &cli.BoolFlag{
+		Name:  "pulsechain",
+		Usage: "PulseChain mainnet",
+	}
 	RinkebyFlag = &cli.BoolFlag{
 		Name:     "rinkeby",
 		Usage:    "Rinkeby network: pre-configured proof-of-authority test network",
@@ -156,6 +160,10 @@ var (
 		Name:     "sepolia",
 		Usage:    "Sepolia network: pre-configured proof-of-work test network",
 		Category: flags.EthCategory,
+	}
+	PulseChainTestnetV4Flag = &cli.BoolFlag{
+		Name:  "pulsechain-testnet-v4",
+		Usage: "PulseChain Testnet V4: pre-configured proof-of-stake test network",
 	}
 
 	// Dev mode
@@ -268,9 +276,9 @@ var (
 		Value:    2048,
 		Category: flags.EthCategory,
 	}
-	OverrideCancun = &cli.Uint64Flag{
-		Name:     "override.cancun",
-		Usage:    "Manually specify the Cancun fork timestamp, overriding the bundled setting",
+	OverrideShanghai = &cli.Uint64Flag{
+		Name:     "override.shanghai",
+		Usage:    "Manually specify the Shanghai fork timestamp, overriding the bundled setting",
 		Category: flags.EthCategory,
 	}
 	// Light server and client settings
@@ -325,6 +333,54 @@ var (
 		Usage:    "Enables serving light clients before syncing",
 		Category: flags.LightCategory,
 	}
+
+	// Ethash settings
+	EthashCacheDirFlag = &flags.DirectoryFlag{
+		Name:     "ethash.cachedir",
+		Usage:    "Directory to store the ethash verification caches (default = inside the datadir)",
+		Category: flags.EthashCategory,
+	}
+	EthashCachesInMemoryFlag = &cli.IntFlag{
+		Name:     "ethash.cachesinmem",
+		Usage:    "Number of recent ethash caches to keep in memory (16MB each)",
+		Value:    ethconfig.Defaults.Ethash.CachesInMem,
+		Category: flags.EthashCategory,
+	}
+	EthashCachesOnDiskFlag = &cli.IntFlag{
+		Name:     "ethash.cachesondisk",
+		Usage:    "Number of recent ethash caches to keep on disk (16MB each)",
+		Value:    ethconfig.Defaults.Ethash.CachesOnDisk,
+		Category: flags.EthashCategory,
+	}
+	EthashCachesLockMmapFlag = &cli.BoolFlag{
+		Name:     "ethash.cacheslockmmap",
+		Usage:    "Lock memory maps of recent ethash caches",
+		Category: flags.EthashCategory,
+	}
+	EthashDatasetDirFlag = &flags.DirectoryFlag{
+		Name:     "ethash.dagdir",
+		Usage:    "Directory to store the ethash mining DAGs",
+		Value:    flags.DirectoryString(ethconfig.Defaults.Ethash.DatasetDir),
+		Category: flags.EthashCategory,
+	}
+	EthashDatasetsInMemoryFlag = &cli.IntFlag{
+		Name:     "ethash.dagsinmem",
+		Usage:    "Number of recent ethash mining DAGs to keep in memory (1+GB each)",
+		Value:    ethconfig.Defaults.Ethash.DatasetsInMem,
+		Category: flags.EthashCategory,
+	}
+	EthashDatasetsOnDiskFlag = &cli.IntFlag{
+		Name:     "ethash.dagsondisk",
+		Usage:    "Number of recent ethash mining DAGs to keep on disk (1+GB each)",
+		Value:    ethconfig.Defaults.Ethash.DatasetsOnDisk,
+		Category: flags.EthashCategory,
+	}
+	EthashDatasetsLockMmapFlag = &cli.BoolFlag{
+		Name:     "ethash.dagslockmmap",
+		Usage:    "Lock memory maps for recent ethash mining DAGs",
+		Category: flags.EthashCategory,
+	}
+
 	// Transaction pool settings
 	TxPoolLocalsFlag = &cli.StringFlag{
 		Name:     "txpool.locals",
@@ -455,17 +511,27 @@ var (
 		Usage:    "Raise the open file descriptor resource limit (default = system fd limit)",
 		Category: flags.PerfCategory,
 	}
-	CryptoKZGFlag = &cli.StringFlag{
-		Name:     "crypto.kzg",
-		Usage:    "KZG library implementation to use; gokzg (recommended) or ckzg",
-		Value:    "gokzg",
-		Category: flags.PerfCategory,
-	}
 
 	// Miner settings
 	MiningEnabledFlag = &cli.BoolFlag{
 		Name:     "mine",
 		Usage:    "Enable mining",
+		Category: flags.MinerCategory,
+	}
+	MinerThreadsFlag = &cli.IntFlag{
+		Name:     "miner.threads",
+		Usage:    "Number of CPU threads to use for mining",
+		Value:    0,
+		Category: flags.MinerCategory,
+	}
+	MinerNotifyFlag = &cli.StringFlag{
+		Name:     "miner.notify",
+		Usage:    "Comma separated HTTP URL list to notify of new work packages",
+		Category: flags.MinerCategory,
+	}
+	MinerNotifyFullFlag = &cli.BoolFlag{
+		Name:     "miner.notify.full",
+		Usage:    "Notify with pending block headers instead of work packages",
 		Category: flags.MinerCategory,
 	}
 	MinerGasLimitFlag = &cli.Uint64Flag{
@@ -494,6 +560,11 @@ var (
 		Name:     "miner.recommit",
 		Usage:    "Time interval to recreate the block being mined",
 		Value:    ethconfig.Defaults.Miner.Recommit,
+		Category: flags.MinerCategory,
+	}
+	MinerNoVerifyFlag = &cli.BoolFlag{
+		Name:     "miner.noverify",
+		Usage:    "Disable remote sealing verification",
 		Category: flags.MinerCategory,
 	}
 	MinerNewPayloadTimeout = &cli.DurationFlag{
@@ -584,6 +655,11 @@ var (
 		Name:     "ethstats",
 		Usage:    "Reporting URL of a ethstats service (nodename:secret@host:port)",
 		Category: flags.MetricsCategory,
+	}
+	FakePoWFlag = &cli.BoolFlag{
+		Name:     "fakepow",
+		Usage:    "Disables proof-of-work verification",
+		Category: flags.LoggingCategory,
 	}
 	NoCompactionFlag = &cli.BoolFlag{
 		Name:     "nocompaction",
@@ -934,9 +1010,13 @@ var (
 		RinkebyFlag,
 		GoerliFlag,
 		SepoliaFlag,
+		PulseChainTestnetV4Flag,
 	}
 	// NetworkFlags is the flag group of all built-in supported networks.
-	NetworkFlags = append([]cli.Flag{MainnetFlag}, TestnetFlags...)
+	NetworkFlags = append([]cli.Flag{
+		MainnetFlag,
+		PulseChainFlag,
+	}, TestnetFlags...)
 
 	// DatabasePathFlags is the flag group of all database path flags.
 	DatabasePathFlags = []cli.Flag{
@@ -958,6 +1038,9 @@ func init() {
 // then a subdirectory of the specified datadir will be used.
 func MakeDataDir(ctx *cli.Context) string {
 	if path := ctx.String(DataDirFlag.Name); path != "" {
+		if ctx.Bool(PulseChainFlag.Name) {
+			return filepath.Join(path, "pulsechain")
+		}
 		if ctx.Bool(RinkebyFlag.Name) {
 			return filepath.Join(path, "rinkeby")
 		}
@@ -966,6 +1049,9 @@ func MakeDataDir(ctx *cli.Context) string {
 		}
 		if ctx.Bool(SepoliaFlag.Name) {
 			return filepath.Join(path, "sepolia")
+		}
+		if ctx.Bool(PulseChainTestnetV4Flag.Name) {
+			return filepath.Join(path, "pulsechain-testnet-v4")
 		}
 		return path
 	}
@@ -1013,12 +1099,16 @@ func setBootstrapNodes(ctx *cli.Context, cfg *p2p.Config) {
 	switch {
 	case ctx.IsSet(BootnodesFlag.Name):
 		urls = SplitAndTrim(ctx.String(BootnodesFlag.Name))
+	case ctx.Bool(PulseChainFlag.Name):
+		urls = params.PulseChainBootnodes
 	case ctx.Bool(SepoliaFlag.Name):
 		urls = params.SepoliaBootnodes
 	case ctx.Bool(RinkebyFlag.Name):
 		urls = params.RinkebyBootnodes
 	case ctx.Bool(GoerliFlag.Name):
 		urls = params.GoerliBootnodes
+	case ctx.Bool(PulseChainTestnetV4Flag.Name):
+		urls = params.PulseChainTestnetV4Bootnodes
 	}
 
 	// don't apply defaults if BootstrapNodes is already set
@@ -1464,12 +1554,16 @@ func SetDataDir(ctx *cli.Context, cfg *node.Config) {
 		cfg.DataDir = ctx.String(DataDirFlag.Name)
 	case ctx.Bool(DeveloperFlag.Name):
 		cfg.DataDir = "" // unless explicitly requested, use memory databases
+	case ctx.Bool(PulseChainFlag.Name) && cfg.DataDir == node.DefaultDataDir():
+		cfg.DataDir = filepath.Join(node.DefaultDataDir(), "pulsechain")
 	case ctx.Bool(RinkebyFlag.Name) && cfg.DataDir == node.DefaultDataDir():
 		cfg.DataDir = filepath.Join(node.DefaultDataDir(), "rinkeby")
 	case ctx.Bool(GoerliFlag.Name) && cfg.DataDir == node.DefaultDataDir():
 		cfg.DataDir = filepath.Join(node.DefaultDataDir(), "goerli")
 	case ctx.Bool(SepoliaFlag.Name) && cfg.DataDir == node.DefaultDataDir():
 		cfg.DataDir = filepath.Join(node.DefaultDataDir(), "sepolia")
+	case ctx.Bool(PulseChainTestnetV4Flag.Name) && cfg.DataDir == node.DefaultDataDir():
+		cfg.DataDir = filepath.Join(node.DefaultDataDir(), "pulsechain-testnet-v4")
 	}
 }
 
@@ -1536,7 +1630,38 @@ func setTxPool(ctx *cli.Context, cfg *txpool.Config) {
 	}
 }
 
+func setEthash(ctx *cli.Context, cfg *ethconfig.Config) {
+	if ctx.IsSet(EthashCacheDirFlag.Name) {
+		cfg.Ethash.CacheDir = ctx.String(EthashCacheDirFlag.Name)
+	}
+	if ctx.IsSet(EthashDatasetDirFlag.Name) {
+		cfg.Ethash.DatasetDir = ctx.String(EthashDatasetDirFlag.Name)
+	}
+	if ctx.IsSet(EthashCachesInMemoryFlag.Name) {
+		cfg.Ethash.CachesInMem = ctx.Int(EthashCachesInMemoryFlag.Name)
+	}
+	if ctx.IsSet(EthashCachesOnDiskFlag.Name) {
+		cfg.Ethash.CachesOnDisk = ctx.Int(EthashCachesOnDiskFlag.Name)
+	}
+	if ctx.IsSet(EthashCachesLockMmapFlag.Name) {
+		cfg.Ethash.CachesLockMmap = ctx.Bool(EthashCachesLockMmapFlag.Name)
+	}
+	if ctx.IsSet(EthashDatasetsInMemoryFlag.Name) {
+		cfg.Ethash.DatasetsInMem = ctx.Int(EthashDatasetsInMemoryFlag.Name)
+	}
+	if ctx.IsSet(EthashDatasetsOnDiskFlag.Name) {
+		cfg.Ethash.DatasetsOnDisk = ctx.Int(EthashDatasetsOnDiskFlag.Name)
+	}
+	if ctx.IsSet(EthashDatasetsLockMmapFlag.Name) {
+		cfg.Ethash.DatasetsLockMmap = ctx.Bool(EthashDatasetsLockMmapFlag.Name)
+	}
+}
+
 func setMiner(ctx *cli.Context, cfg *miner.Config) {
+	if ctx.IsSet(MinerNotifyFlag.Name) {
+		cfg.Notify = strings.Split(ctx.String(MinerNotifyFlag.Name), ",")
+	}
+	cfg.NotifyFull = ctx.Bool(MinerNotifyFullFlag.Name)
 	if ctx.IsSet(MinerExtraDataFlag.Name) {
 		cfg.ExtraData = []byte(ctx.String(MinerExtraDataFlag.Name))
 	}
@@ -1548,6 +1673,9 @@ func setMiner(ctx *cli.Context, cfg *miner.Config) {
 	}
 	if ctx.IsSet(MinerRecommitIntervalFlag.Name) {
 		cfg.Recommit = ctx.Duration(MinerRecommitIntervalFlag.Name)
+	}
+	if ctx.IsSet(MinerNoVerifyFlag.Name) {
+		cfg.Noverify = ctx.Bool(MinerNoVerifyFlag.Name)
 	}
 	if ctx.IsSet(MinerNewPayloadTimeout.Name) {
 		cfg.NewPayloadTimeout = ctx.Duration(MinerNewPayloadTimeout.Name)
@@ -1626,7 +1754,7 @@ func CheckExclusive(ctx *cli.Context, args ...interface{}) {
 // SetEthConfig applies eth-related command line flags to the config.
 func SetEthConfig(ctx *cli.Context, stack *node.Node, cfg *ethconfig.Config) {
 	// Avoid conflicting network flags
-	CheckExclusive(ctx, MainnetFlag, DeveloperFlag, RinkebyFlag, GoerliFlag, SepoliaFlag)
+	CheckExclusive(ctx, MainnetFlag, PulseChainFlag, DeveloperFlag, RinkebyFlag, GoerliFlag, SepoliaFlag, PulseChainTestnetV4Flag)
 	CheckExclusive(ctx, LightServeFlag, SyncModeFlag, "light")
 	CheckExclusive(ctx, DeveloperFlag, ExternalSignerFlag) // Can't use both ephemeral unlocked and external signer
 	if ctx.String(GCModeFlag.Name) == "archive" && ctx.Uint64(TxLookupLimitFlag.Name) != 0 {
@@ -1639,6 +1767,7 @@ func SetEthConfig(ctx *cli.Context, stack *node.Node, cfg *ethconfig.Config) {
 	setEtherbase(ctx, cfg)
 	setGPO(ctx, &cfg.GPO, ctx.String(SyncModeFlag.Name) == "light")
 	setTxPool(ctx, &cfg.TxPool)
+	setEthash(ctx, cfg)
 	setMiner(ctx, &cfg.Miner)
 	setRequiredBlocks(ctx, cfg)
 	setLes(ctx, cfg)
@@ -1754,6 +1883,7 @@ func SetEthConfig(ctx *cli.Context, stack *node.Node, cfg *ethconfig.Config) {
 			cfg.EthDiscoveryURLs = SplitAndTrim(urls)
 		}
 	}
+
 	// Override any default configs for hard coded networks.
 	switch {
 	case ctx.Bool(MainnetFlag.Name):
@@ -1761,6 +1891,12 @@ func SetEthConfig(ctx *cli.Context, stack *node.Node, cfg *ethconfig.Config) {
 			cfg.NetworkId = 1
 		}
 		cfg.Genesis = core.DefaultGenesisBlock()
+		SetDNSDiscoveryDefaults(cfg, params.MainnetGenesisHash)
+	case ctx.Bool(PulseChainFlag.Name):
+		if !ctx.IsSet(NetworkIdFlag.Name) {
+			cfg.NetworkId = params.PulseChainNetworkId
+		}
+		cfg.Genesis = core.DefaultPulseChainGenesisBlock()
 		SetDNSDiscoveryDefaults(cfg, params.MainnetGenesisHash)
 	case ctx.Bool(SepoliaFlag.Name):
 		if !ctx.IsSet(NetworkIdFlag.Name) {
@@ -1790,6 +1926,12 @@ func SetEthConfig(ctx *cli.Context, stack *node.Node, cfg *ethconfig.Config) {
 		}
 		cfg.Genesis = core.DefaultGoerliGenesisBlock()
 		SetDNSDiscoveryDefaults(cfg, params.GoerliGenesisHash)
+	case ctx.Bool(PulseChainTestnetV4Flag.Name):
+		if !ctx.IsSet(NetworkIdFlag.Name) {
+			cfg.NetworkId = params.PulseChainTestnetV4NetworkId
+		}
+		cfg.Genesis = core.DefaultPulseChainTestnetV4GenesisBlock()
+		SetDNSDiscoveryDefaults(cfg, params.MainnetGenesisHash)
 	case ctx.Bool(DeveloperFlag.Name):
 		if !ctx.IsSet(NetworkIdFlag.Name) {
 			cfg.NetworkId = 1337
@@ -1863,14 +2005,6 @@ func SetEthConfig(ctx *cli.Context, stack *node.Node, cfg *ethconfig.Config) {
 			SetDNSDiscoveryDefaults(cfg, params.MainnetGenesisHash)
 		}
 	}
-	// Set any dangling config values
-	if ctx.String(CryptoKZGFlag.Name) != "gokzg" && ctx.String(CryptoKZGFlag.Name) != "ckzg" {
-		Fatalf("--%s flag must be 'gokzg' or 'ckzg'", CryptoKZGFlag.Name)
-	}
-	log.Info("Initializing the KZG library", "backend", ctx.String(CryptoKZGFlag.Name))
-	if err := kzg4844.UseCKZG(ctx.String(CryptoKZGFlag.Name) == "ckzg"); err != nil {
-		Fatalf("Failed to set KZG library implementation to %s: %v", ctx.String(CryptoKZGFlag.Name), err)
-	}
 }
 
 // SetDNSDiscoveryDefaults configures DNS discovery with the given URL if
@@ -1883,7 +2017,7 @@ func SetDNSDiscoveryDefaults(cfg *ethconfig.Config, genesis common.Hash) {
 	if cfg.SyncMode == downloader.LightSync {
 		protocol = "les"
 	}
-	if url := params.KnownDNSNetwork(genesis, protocol); url != "" {
+	if url := params.KnownDNSNetwork(genesis, cfg.NetworkId, protocol); url != "" {
 		cfg.EthDiscoveryURLs = []string{url}
 		cfg.SnapDiscoveryURLs = cfg.EthDiscoveryURLs
 	}
@@ -2112,12 +2246,16 @@ func MakeGenesis(ctx *cli.Context) *core.Genesis {
 	switch {
 	case ctx.Bool(MainnetFlag.Name):
 		genesis = core.DefaultGenesisBlock()
+	case ctx.Bool(PulseChainFlag.Name):
+		genesis = core.DefaultPulseChainGenesisBlock()
 	case ctx.Bool(SepoliaFlag.Name):
 		genesis = core.DefaultSepoliaGenesisBlock()
 	case ctx.Bool(RinkebyFlag.Name):
 		genesis = core.DefaultRinkebyGenesisBlock()
 	case ctx.Bool(GoerliFlag.Name):
 		genesis = core.DefaultGoerliGenesisBlock()
+	case ctx.Bool(PulseChainTestnetV4Flag.Name):
+		genesis = core.DefaultPulseChainTestnetV4GenesisBlock()
 	case ctx.Bool(DeveloperFlag.Name):
 		Fatalf("Developer chains are ephemeral")
 	}
@@ -2130,14 +2268,15 @@ func MakeChain(ctx *cli.Context, stack *node.Node, readonly bool) (*core.BlockCh
 		gspec   = MakeGenesis(ctx)
 		chainDb = MakeChainDatabase(ctx, stack, readonly)
 	)
-	config, err := core.LoadChainConfig(chainDb, gspec)
+	cliqueConfig, err := core.LoadCliqueConfig(chainDb, gspec)
 	if err != nil {
 		Fatalf("%v", err)
 	}
-	engine, err := ethconfig.CreateConsensusEngine(config, chainDb)
-	if err != nil {
-		Fatalf("%v", err)
+	ethashConfig := ethconfig.Defaults.Ethash
+	if ctx.Bool(FakePoWFlag.Name) {
+		ethashConfig.PowMode = ethash.ModeFake
 	}
+	engine := ethconfig.CreateConsensusEngine(stack, &ethashConfig, cliqueConfig, nil, false, chainDb)
 	if gcmode := ctx.String(GCModeFlag.Name); gcmode != "full" && gcmode != "archive" {
 		Fatalf("--%s must be either 'full' or 'archive'", GCModeFlag.Name)
 	}

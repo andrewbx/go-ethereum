@@ -134,9 +134,6 @@ func (b *EthAPIBackend) BlockByNumber(ctx context.Context, number rpc.BlockNumbe
 			return nil, errors.New("'finalized' tag not supported on pre-merge network")
 		}
 		header := b.eth.blockchain.CurrentFinalBlock()
-		if header == nil {
-			return nil, errors.New("finalized block not found")
-		}
 		return b.eth.blockchain.GetBlock(header.Hash(), header.Number.Uint64()), nil
 	}
 	if number == rpc.SafeBlockNumber {
@@ -144,9 +141,6 @@ func (b *EthAPIBackend) BlockByNumber(ctx context.Context, number rpc.BlockNumbe
 			return nil, errors.New("'safe' tag not supported on pre-merge network")
 		}
 		header := b.eth.blockchain.CurrentSafeBlock()
-		if header == nil {
-			return nil, errors.New("safe block not found")
-		}
 		return b.eth.blockchain.GetBlock(header.Hash(), header.Number.Uint64()), nil
 	}
 	return b.eth.blockchain.GetBlockByNumber(uint64(number)), nil
@@ -246,18 +240,13 @@ func (b *EthAPIBackend) GetTd(ctx context.Context, hash common.Hash) *big.Int {
 	return nil
 }
 
-func (b *EthAPIBackend) GetEVM(ctx context.Context, msg *core.Message, state *state.StateDB, header *types.Header, vmConfig *vm.Config, blockCtx *vm.BlockContext) (*vm.EVM, func() error) {
+func (b *EthAPIBackend) GetEVM(ctx context.Context, msg *core.Message, state *state.StateDB, header *types.Header, vmConfig *vm.Config) (*vm.EVM, func() error, error) {
 	if vmConfig == nil {
 		vmConfig = b.eth.blockchain.GetVMConfig()
 	}
 	txContext := core.NewEVMTxContext(msg)
-	var context vm.BlockContext
-	if blockCtx != nil {
-		context = *blockCtx
-	} else {
-		context = core.NewEVMBlockContext(header, b.eth.BlockChain(), nil)
-	}
-	return vm.NewEVM(context, txContext, state, b.eth.blockchain.Config(), *vmConfig), state.Error
+	context := core.NewEVMBlockContext(header, b.eth.BlockChain(), nil)
+	return vm.NewEVM(context, txContext, state, b.eth.blockchain.Config(), *vmConfig), state.Error, nil
 }
 
 func (b *EthAPIBackend) SubscribeRemovedLogsEvent(ch chan<- core.RemovedLogsEvent) event.Subscription {
@@ -397,8 +386,8 @@ func (b *EthAPIBackend) Miner() *miner.Miner {
 	return b.eth.Miner()
 }
 
-func (b *EthAPIBackend) StartMining() error {
-	return b.eth.StartMining()
+func (b *EthAPIBackend) StartMining(threads int) error {
+	return b.eth.StartMining(threads)
 }
 
 func (b *EthAPIBackend) StateAtBlock(ctx context.Context, block *types.Block, reexec uint64, base *state.StateDB, readOnly bool, preferDisk bool) (*state.StateDB, tracers.StateReleaseFunc, error) {

@@ -62,7 +62,7 @@ type Receipt struct {
 	TxHash            common.Hash    `json:"transactionHash" gencodec:"required"`
 	ContractAddress   common.Address `json:"contractAddress"`
 	GasUsed           uint64         `json:"gasUsed" gencodec:"required"`
-	EffectiveGasPrice *big.Int       `json:"effectiveGasPrice"` // required, but tag omitted for backwards compatibility
+	EffectiveGasPrice *big.Int       `json:"effectiveGasPrice"`
 
 	// Inclusion information: These fields provide information about the inclusion of the
 	// transaction corresponding to this receipt.
@@ -77,7 +77,6 @@ type receiptMarshaling struct {
 	Status            hexutil.Uint64
 	CumulativeGasUsed hexutil.Uint64
 	GasUsed           hexutil.Uint64
-	EffectiveGasPrice *hexutil.Big
 	BlockNumber       *hexutil.Big
 	TransactionIndex  hexutil.Uint
 }
@@ -314,8 +313,8 @@ func (rs Receipts) EncodeIndex(i int, w *bytes.Buffer) {
 
 // DeriveFields fills the receipts with their computed fields based on consensus
 // data and contextual infos like containing block and transactions.
-func (rs Receipts) DeriveFields(config *params.ChainConfig, hash common.Hash, number uint64, time uint64, baseFee *big.Int, txs []*Transaction) error {
-	signer := MakeSigner(config, new(big.Int).SetUint64(number), time)
+func (rs Receipts) DeriveFields(config *params.ChainConfig, hash common.Hash, number uint64, baseFee *big.Int, txs []*Transaction) error {
+	signer := MakeSigner(config, new(big.Int).SetUint64(number))
 
 	logIndex := uint(0)
 	if len(txs) != len(rs) {
