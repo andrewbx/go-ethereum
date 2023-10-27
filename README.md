@@ -115,15 +115,6 @@ use separate accounts for play and real money. Unless you manually move
 accounts, `geth` will by default correctly separate the two networks and will not make any
 accounts available between them.*
 
-### Full node on the Rinkeby test network
-
-Go-Pulse also supports connecting to the older proof-of-authority based test network
-called [*Rinkeby*](https://www.rinkeby.io) which is operated by members of the community.
-
-```shell
-$ geth --rinkeby console
-```
-
 ### **Full node on PulseChain Testnet V4**
 
 To connect to the PulseChain Testnet V4:
