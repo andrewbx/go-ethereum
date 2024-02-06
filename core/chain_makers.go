@@ -32,7 +32,6 @@ import (
 	"github.com/ethereum/go-ethereum/ethdb"
 	"github.com/ethereum/go-ethereum/params"
 	"github.com/ethereum/go-ethereum/trie"
-	"github.com/holiman/uint256"
 )
 
 // BlockGen creates blocks for testing.
@@ -158,7 +157,7 @@ func (b *BlockGen) AddTxWithVMConfig(tx *types.Transaction, config vm.Config) {
 }
 
 // GetBalance returns the balance of the given address at the generated block.
-func (b *BlockGen) GetBalance(addr common.Address) *uint256.Int {
+func (b *BlockGen) GetBalance(addr common.Address) *big.Int {
 	return b.statedb.GetBalance(addr)
 }
 

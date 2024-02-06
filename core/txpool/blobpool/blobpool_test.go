@@ -51,8 +51,20 @@ var (
 	emptyBlob          = kzg4844.Blob{}
 	emptyBlobCommit, _ = kzg4844.BlobToCommitment(emptyBlob)
 	emptyBlobProof, _  = kzg4844.ComputeBlobProof(emptyBlob, emptyBlobCommit)
-	emptyBlobVHash     = kzg4844.CalcBlobHashV1(sha256.New(), &emptyBlobCommit)
+	emptyBlobVHash     = blobHash(emptyBlobCommit)
 )
+
+func blobHash(commit kzg4844.Commitment) common.Hash {
+	hasher := sha256.New()
+	hasher.Write(commit[:])
+	hash := hasher.Sum(nil)
+
+	var vhash common.Hash
+	vhash[0] = params.BlobTxHashVersion
+	copy(vhash[1:], hash[1:])
+
+	return vhash
+}
 
 // Chain configuration with Cancun enabled.
 //
@@ -305,18 +317,9 @@ func verifyPoolInternals(t *testing.T, pool *BlobPool) {
 //   - 1. A transaction that cannot be decoded must be dropped
 //   - 2. A transaction that cannot be recovered (bad signature) must be dropped
 //   - 3. All transactions after a nonce gap must be dropped
-//   - 4. All transactions after an already included nonce must be dropped
-//   - 5. All transactions after an underpriced one (including it) must be dropped
-//   - 6. All transactions after an overdrafting sequence must be dropped
-//   - 7. All transactions exceeding the per-account limit must be dropped
-//
-// Furthermore, some strange corner-cases can also occur after a crash, as Billy's
-// simplicity also allows it to resurrect past deleted entities:
-//
-//   - 8. Fully duplicate transactions (matching hash) must be dropped
-//   - 9. Duplicate nonces from the same account must be dropped
+//   - 4. All transactions after an underpriced one (including it) must be dropped
 func TestOpenDrops(t *testing.T) {
-	log.SetDefault(log.NewLogger(log.NewTerminalHandlerWithLevel(os.Stderr, log.LevelTrace, true)))
+	log.Root().SetHandler(log.LvlFilterHandler(log.LvlTrace, log.StreamHandler(os.Stderr, log.TerminalFormat(true))))
 
 	// Create a temporary folder for the persistent backend
 	storage, _ := os.MkdirTemp("", "blobpool-")
@@ -347,7 +350,7 @@ func TestOpenDrops(t *testing.T) {
 	badsig, _ := store.Put(blob)
 
 	// Insert a sequence of transactions with a nonce gap in between to verify
-	// that anything gapped will get evicted (case 3).
+	// that anything gapped will get evicted (case 3)
 	var (
 		gapper, _ = crypto.GenerateKey()
 
@@ -366,7 +369,7 @@ func TestOpenDrops(t *testing.T) {
 		}
 	}
 	// Insert a sequence of transactions with a gapped starting nonce to verify
-	// that the entire set will get dropped (case 3).
+	// that the entire set will get dropped.
 	var (
 		dangler, _ = crypto.GenerateKey()
 		dangling   = make(map[uint64]struct{})
@@ -379,7 +382,7 @@ func TestOpenDrops(t *testing.T) {
 		dangling[id] = struct{}{}
 	}
 	// Insert a sequence of transactions with already passed nonces to veirfy
-	// that the entire set will get dropped (case 4).
+	// that the entire set will get dropped.
 	var (
 		filler, _ = crypto.GenerateKey()
 		filled    = make(map[uint64]struct{})
@@ -392,7 +395,7 @@ func TestOpenDrops(t *testing.T) {
 		filled[id] = struct{}{}
 	}
 	// Insert a sequence of transactions with partially passed nonces to veirfy
-	// that the included part of the set will get dropped (case 4).
+	// that the included part of the set will get dropped
 	var (
 		overlapper, _ = crypto.GenerateKey()
 		overlapped    = make(map[uint64]struct{})
@@ -409,7 +412,7 @@ func TestOpenDrops(t *testing.T) {
 		}
 	}
 	// Insert a sequence of transactions with an underpriced first to verify that
-	// the entire set will get dropped (case 5).
+	// the entire set will get dropped (case 4).
 	var (
 		underpayer, _ = crypto.GenerateKey()
 		underpaid     = make(map[uint64]struct{})
@@ -428,7 +431,7 @@ func TestOpenDrops(t *testing.T) {
 	}
 
 	// Insert a sequence of transactions with an underpriced in between to verify
-	// that it and anything newly gapped will get evicted (case 5).
+	// that it and anything newly gapped will get evicted (case 4).
 	var (
 		outpricer, _ = crypto.GenerateKey()
 		outpriced    = make(map[uint64]struct{})
@@ -450,7 +453,7 @@ func TestOpenDrops(t *testing.T) {
 		}
 	}
 	// Insert a sequence of transactions fully overdrafted to verify that the
-	// entire set will get invalidated (case 6).
+	// entire set will get invalidated.
 	var (
 		exceeder, _ = crypto.GenerateKey()
 		exceeded    = make(map[uint64]struct{})
@@ -468,7 +471,7 @@ func TestOpenDrops(t *testing.T) {
 		exceeded[id] = struct{}{}
 	}
 	// Insert a sequence of transactions partially overdrafted to verify that part
-	// of the set will get invalidated (case 6).
+	// of the set will get invalidated.
 	var (
 		overdrafter, _ = crypto.GenerateKey()
 		overdrafted    = make(map[uint64]struct{})
@@ -490,7 +493,7 @@ func TestOpenDrops(t *testing.T) {
 		}
 	}
 	// Insert a sequence of transactions overflowing the account cap to verify
-	// that part of the set will get invalidated (case 7).
+	// that part of the set will get invalidated.
 	var (
 		overcapper, _ = crypto.GenerateKey()
 		overcapped    = make(map[uint64]struct{})
@@ -505,59 +508,21 @@ func TestOpenDrops(t *testing.T) {
 			overcapped[id] = struct{}{}
 		}
 	}
-	// Insert a batch of duplicated transactions to verify that only one of each
-	// version will remain (case 8).
-	var (
-		duplicater, _ = crypto.GenerateKey()
-		duplicated    = make(map[uint64]struct{})
-	)
-	for _, nonce := range []uint64{0, 1, 2} {
-		blob, _ := rlp.EncodeToBytes(makeTx(nonce, 1, 1, 1, duplicater))
-
-		for i := 0; i < int(nonce)+1; i++ {
-			id, _ := store.Put(blob)
-			if i == 0 {
-				valids[id] = struct{}{}
-			} else {
-				duplicated[id] = struct{}{}
-			}
-		}
-	}
-	// Insert a batch of duplicated nonces to verify that only one of each will
-	// remain (case 9).
-	var (
-		repeater, _ = crypto.GenerateKey()
-		repeated    = make(map[uint64]struct{})
-	)
-	for _, nonce := range []uint64{0, 1, 2} {
-		for i := 0; i < int(nonce)+1; i++ {
-			blob, _ := rlp.EncodeToBytes(makeTx(nonce, 1, uint64(i)+1 /* unique hashes */, 1, repeater))
-
-			id, _ := store.Put(blob)
-			if i == 0 {
-				valids[id] = struct{}{}
-			} else {
-				repeated[id] = struct{}{}
-			}
-		}
-	}
 	store.Close()
 
 	// Create a blob pool out of the pre-seeded data
 	statedb, _ := state.New(types.EmptyRootHash, state.NewDatabase(rawdb.NewDatabase(memorydb.New())), nil)
-	statedb.AddBalance(crypto.PubkeyToAddress(gapper.PublicKey), uint256.NewInt(1000000))
-	statedb.AddBalance(crypto.PubkeyToAddress(dangler.PublicKey), uint256.NewInt(1000000))
-	statedb.AddBalance(crypto.PubkeyToAddress(filler.PublicKey), uint256.NewInt(1000000))
+	statedb.AddBalance(crypto.PubkeyToAddress(gapper.PublicKey), big.NewInt(1000000))
+	statedb.AddBalance(crypto.PubkeyToAddress(dangler.PublicKey), big.NewInt(1000000))
+	statedb.AddBalance(crypto.PubkeyToAddress(filler.PublicKey), big.NewInt(1000000))
 	statedb.SetNonce(crypto.PubkeyToAddress(filler.PublicKey), 3)
-	statedb.AddBalance(crypto.PubkeyToAddress(overlapper.PublicKey), uint256.NewInt(1000000))
+	statedb.AddBalance(crypto.PubkeyToAddress(overlapper.PublicKey), big.NewInt(1000000))
 	statedb.SetNonce(crypto.PubkeyToAddress(overlapper.PublicKey), 2)
-	statedb.AddBalance(crypto.PubkeyToAddress(underpayer.PublicKey), uint256.NewInt(1000000))
-	statedb.AddBalance(crypto.PubkeyToAddress(outpricer.PublicKey), uint256.NewInt(1000000))
-	statedb.AddBalance(crypto.PubkeyToAddress(exceeder.PublicKey), uint256.NewInt(1000000))
-	statedb.AddBalance(crypto.PubkeyToAddress(overdrafter.PublicKey), uint256.NewInt(1000000))
-	statedb.AddBalance(crypto.PubkeyToAddress(overcapper.PublicKey), uint256.NewInt(10000000))
-	statedb.AddBalance(crypto.PubkeyToAddress(duplicater.PublicKey), uint256.NewInt(1000000))
-	statedb.AddBalance(crypto.PubkeyToAddress(repeater.PublicKey), uint256.NewInt(1000000))
+	statedb.AddBalance(crypto.PubkeyToAddress(underpayer.PublicKey), big.NewInt(1000000))
+	statedb.AddBalance(crypto.PubkeyToAddress(outpricer.PublicKey), big.NewInt(1000000))
+	statedb.AddBalance(crypto.PubkeyToAddress(exceeder.PublicKey), big.NewInt(1000000))
+	statedb.AddBalance(crypto.PubkeyToAddress(overdrafter.PublicKey), big.NewInt(1000000))
+	statedb.AddBalance(crypto.PubkeyToAddress(overcapper.PublicKey), big.NewInt(10000000))
 	statedb.Commit(0, true)
 
 	chain := &testBlockChain{
@@ -601,10 +566,6 @@ func TestOpenDrops(t *testing.T) {
 					t.Errorf("partially overdrafted transaction remained in storage: %d", tx.id)
 				} else if _, ok := overcapped[tx.id]; ok {
 					t.Errorf("overcapped transaction remained in storage: %d", tx.id)
-				} else if _, ok := duplicated[tx.id]; ok {
-					t.Errorf("duplicated transaction remained in storage: %d", tx.id)
-				} else if _, ok := repeated[tx.id]; ok {
-					t.Errorf("repeated nonce transaction remained in storage: %d", tx.id)
 				} else {
 					alive[tx.id] = struct{}{}
 				}
@@ -633,13 +594,13 @@ func TestOpenDrops(t *testing.T) {
 	verifyPoolInternals(t, pool)
 }
 
-// Tests that transactions loaded from disk are indexed correctly.
+// Tests that transactions loaded from disk are indexed corrently.
 //
-//   - 1. Transactions must be grouped by sender, sorted by nonce
+//   - 1. Transactions must be groupped by sender, sorted by nonce
 //   - 2. Eviction thresholds are calculated correctly for the sequences
 //   - 3. Balance usage of an account is totals across all transactions
 func TestOpenIndex(t *testing.T) {
-	log.SetDefault(log.NewLogger(log.NewTerminalHandlerWithLevel(os.Stderr, log.LevelTrace, true)))
+	log.Root().SetHandler(log.LvlFilterHandler(log.LvlTrace, log.StreamHandler(os.Stderr, log.TerminalFormat(true))))
 
 	// Create a temporary folder for the persistent backend
 	storage, _ := os.MkdirTemp("", "blobpool-")
@@ -649,7 +610,7 @@ func TestOpenIndex(t *testing.T) {
 	store, _ := billy.Open(billy.Options{Path: filepath.Join(storage, pendingTransactionStore)}, newSlotter(), nil)
 
 	// Insert a sequence of transactions with varying price points to check that
-	// the cumulative minimum will be maintained.
+	// the cumulative minimumw will be maintained.
 	var (
 		key, _ = crypto.GenerateKey()
 		addr   = crypto.PubkeyToAddress(key.PublicKey)
@@ -676,7 +637,7 @@ func TestOpenIndex(t *testing.T) {
 
 	// Create a blob pool out of the pre-seeded data
 	statedb, _ := state.New(types.EmptyRootHash, state.NewDatabase(rawdb.NewDatabase(memorydb.New())), nil)
-	statedb.AddBalance(addr, uint256.NewInt(1_000_000_000))
+	statedb.AddBalance(addr, big.NewInt(1_000_000_000))
 	statedb.Commit(0, true)
 
 	chain := &testBlockChain{
@@ -728,7 +689,7 @@ func TestOpenIndex(t *testing.T) {
 // Tests that after indexing all the loaded transactions from disk, a price heap
 // is correctly constructed based on the head basefee and blobfee.
 func TestOpenHeap(t *testing.T) {
-	log.SetDefault(log.NewLogger(log.NewTerminalHandlerWithLevel(os.Stderr, log.LevelTrace, true)))
+	log.Root().SetHandler(log.LvlFilterHandler(log.LvlTrace, log.StreamHandler(os.Stderr, log.TerminalFormat(true))))
 
 	// Create a temporary folder for the persistent backend
 	storage, _ := os.MkdirTemp("", "blobpool-")
@@ -776,9 +737,9 @@ func TestOpenHeap(t *testing.T) {
 
 	// Create a blob pool out of the pre-seeded data
 	statedb, _ := state.New(types.EmptyRootHash, state.NewDatabase(rawdb.NewDatabase(memorydb.New())), nil)
-	statedb.AddBalance(addr1, uint256.NewInt(1_000_000_000))
-	statedb.AddBalance(addr2, uint256.NewInt(1_000_000_000))
-	statedb.AddBalance(addr3, uint256.NewInt(1_000_000_000))
+	statedb.AddBalance(addr1, big.NewInt(1_000_000_000))
+	statedb.AddBalance(addr2, big.NewInt(1_000_000_000))
+	statedb.AddBalance(addr3, big.NewInt(1_000_000_000))
 	statedb.Commit(0, true)
 
 	chain := &testBlockChain{
@@ -815,7 +776,7 @@ func TestOpenHeap(t *testing.T) {
 // Tests that after the pool's previous state is loaded back, any transactions
 // over the new storage cap will get dropped.
 func TestOpenCap(t *testing.T) {
-	log.SetDefault(log.NewLogger(log.NewTerminalHandlerWithLevel(os.Stderr, log.LevelTrace, true)))
+	log.Root().SetHandler(log.LvlFilterHandler(log.LvlTrace, log.StreamHandler(os.Stderr, log.TerminalFormat(true))))
 
 	// Create a temporary folder for the persistent backend
 	storage, _ := os.MkdirTemp("", "blobpool-")
@@ -856,9 +817,9 @@ func TestOpenCap(t *testing.T) {
 	for _, datacap := range []uint64{2 * (txAvgSize + blobSize), 100 * (txAvgSize + blobSize)} {
 		// Create a blob pool out of the pre-seeded data, but cap it to 2 blob transaction
 		statedb, _ := state.New(types.EmptyRootHash, state.NewDatabase(rawdb.NewDatabase(memorydb.New())), nil)
-		statedb.AddBalance(addr1, uint256.NewInt(1_000_000_000))
-		statedb.AddBalance(addr2, uint256.NewInt(1_000_000_000))
-		statedb.AddBalance(addr3, uint256.NewInt(1_000_000_000))
+		statedb.AddBalance(addr1, big.NewInt(1_000_000_000))
+		statedb.AddBalance(addr2, big.NewInt(1_000_000_000))
+		statedb.AddBalance(addr3, big.NewInt(1_000_000_000))
 		statedb.Commit(0, true)
 
 		chain := &testBlockChain{
@@ -907,7 +868,7 @@ func TestOpenCap(t *testing.T) {
 // specific to the blob pool. It does not do an exhaustive transaction validity
 // check.
 func TestAdd(t *testing.T) {
-	log.SetDefault(log.NewLogger(log.NewTerminalHandlerWithLevel(os.Stderr, log.LevelTrace, true)))
+	log.Root().SetHandler(log.LvlFilterHandler(log.LvlTrace, log.StreamHandler(os.Stderr, log.TerminalFormat(true))))
 
 	// seed is a helper tumpe to seed an initial state db and pool
 	type seed struct {
@@ -1248,8 +1209,8 @@ func TestAdd(t *testing.T) {
 			keys[acc], _ = crypto.GenerateKey()
 			addrs[acc] = crypto.PubkeyToAddress(keys[acc].PublicKey)
 
-			// Seed the state database with this account
-			statedb.AddBalance(addrs[acc], new(uint256.Int).SetUint64(seed.balance))
+			// Seed the state database with this acocunt
+			statedb.AddBalance(addrs[acc], new(big.Int).SetUint64(seed.balance))
 			statedb.SetNonce(addrs[acc], seed.nonce)
 
 			// Sign the seed transactions and store them in the data store

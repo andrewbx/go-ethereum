@@ -119,11 +119,11 @@ func newTransactionsByPriceAndNonce(signer types.Signer, txs map[common.Address]
 }
 
 // Peek returns the next transaction by price.
-func (t *transactionsByPriceAndNonce) Peek() (*txpool.LazyTransaction, *big.Int) {
+func (t *transactionsByPriceAndNonce) Peek() *txpool.LazyTransaction {
 	if len(t.heads) == 0 {
-		return nil, nil
+		return nil
 	}
-	return t.heads[0].tx, t.heads[0].fees
+	return t.heads[0].tx
 }
 
 // Shift replaces the current best head with the next one from the same account.

@@ -205,7 +205,6 @@ type worker struct {
 	mu       sync.RWMutex // The lock used to protect the coinbase and extra fields
 	coinbase common.Address
 	extra    []byte
-	tip      *big.Int // Minimum tip needed for non-local transaction to include them
 
 	pendingMu    sync.RWMutex
 	pendingTasks map[common.Hash]*task
@@ -252,7 +251,6 @@ func newWorker(config *Config, chainConfig *params.ChainConfig, engine consensus
 		isLocalBlock:       isLocalBlock,
 		coinbase:           config.Etherbase,
 		extra:              config.ExtraData,
-		tip:                config.GasPrice,
 		pendingTasks:       make(map[common.Hash]*task),
 		txsCh:              make(chan core.NewTxsEvent, txChanSize),
 		chainHeadCh:        make(chan core.ChainHeadEvent, chainHeadChanSize),
@@ -327,13 +325,6 @@ func (w *worker) setExtra(extra []byte) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	w.extra = extra
-}
-
-// setGasTip sets the minimum miner tip needed to include a non-local transaction.
-func (w *worker) setGasTip(tip *big.Int) {
-	w.mu.Lock()
-	defer w.mu.Unlock()
-	w.tip = tip
 }
 
 // setRecommitInterval updates the interval for miner sealing work recommitting.
@@ -563,7 +554,7 @@ func (w *worker) mainLoop() {
 				}
 				txset := newTransactionsByPriceAndNonce(w.current.signer, txs, w.current.header.BaseFee)
 				tcount := w.current.tcount
-				w.commitTransactions(w.current, txset, nil, new(big.Int))
+				w.commitTransactions(w.current, txset, nil)
 
 				// Only update the snapshot if any new transactions were added
 				// to the pending block
@@ -801,7 +792,7 @@ func (w *worker) applyTransaction(env *environment, tx *types.Transaction) (*typ
 	return receipt, err
 }
 
-func (w *worker) commitTransactions(env *environment, txs *transactionsByPriceAndNonce, interrupt *atomic.Int32, minTip *big.Int) error {
+func (w *worker) commitTransactions(env *environment, txs *transactionsByPriceAndNonce, interrupt *atomic.Int32) error {
 	gasLimit := env.header.GasLimit
 	if env.gasPool == nil {
 		env.gasPool = new(core.GasPool).AddGas(gasLimit)
@@ -821,7 +812,7 @@ func (w *worker) commitTransactions(env *environment, txs *transactionsByPriceAn
 			break
 		}
 		// Retrieve the next transaction and abort if all done.
-		ltx, tip := txs.Peek()
+		ltx := txs.Peek()
 		if ltx == nil {
 			break
 		}
@@ -835,11 +826,6 @@ func (w *worker) commitTransactions(env *environment, txs *transactionsByPriceAn
 			log.Trace("Not enough blob gas left for transaction", "hash", ltx.Hash, "left", left, "needed", ltx.BlobGas)
 			txs.Pop()
 			continue
-		}
-		// If we don't receive enough tip for the next transaction, skip the account
-		if tip.Cmp(minTip) < 0 {
-			log.Trace("Not enough tip for transaction", "hash", ltx.Hash, "tip", tip, "needed", minTip)
-			break // If the next-best is too low, surely no better will be available
 		}
 		// Transaction seems to fit, pull it up from the pool
 		tx := ltx.Resolve()
@@ -902,7 +888,7 @@ func (w *worker) commitTransactions(env *environment, txs *transactionsByPriceAn
 
 // generateParams wraps various of settings for generating sealing task.
 type generateParams struct {
-	timestamp   uint64            // The timestamp for sealing task
+	timestamp   uint64            // The timstamp for sealing task
 	forceTime   bool              // Flag whether the given timestamp is immutable or not
 	parentHash  common.Hash       // Parent block hash, empty means the latest chain head
 	coinbase    common.Address    // The fee recipient address for including transaction
@@ -1011,19 +997,15 @@ func (w *worker) fillTransactions(interrupt *atomic.Int32, env *environment) err
 	}
 
 	// Fill the block with all available pending transactions.
-	w.mu.RLock()
-	tip := w.tip
-	w.mu.RUnlock()
-
 	if len(localTxs) > 0 {
 		txs := newTransactionsByPriceAndNonce(env.signer, localTxs, env.header.BaseFee)
-		if err := w.commitTransactions(env, txs, interrupt, new(big.Int)); err != nil {
+		if err := w.commitTransactions(env, txs, interrupt); err != nil {
 			return err
 		}
 	}
 	if len(remoteTxs) > 0 {
 		txs := newTransactionsByPriceAndNonce(env.signer, remoteTxs, env.header.BaseFee)
-		if err := w.commitTransactions(env, txs, interrupt, tip); err != nil {
+		if err := w.commitTransactions(env, txs, interrupt); err != nil {
 			return err
 		}
 	}
@@ -1092,7 +1074,7 @@ func (w *worker) commitWork(interrupt *atomic.Int32, timestamp int64) {
 	case err == nil:
 		// The entire block is filled, decrease resubmit interval in case
 		// of current interval is larger than the user-specified one.
-		w.adjustResubmitInterval(&intervalAdjust{inc: false})
+		w.resubmitAdjustCh <- &intervalAdjust{inc: false}
 
 	case errors.Is(err, errBlockInterruptedByRecommit):
 		// Notify resubmit loop to increase resubmitting interval if the
@@ -1102,10 +1084,10 @@ func (w *worker) commitWork(interrupt *atomic.Int32, timestamp int64) {
 		if ratio < 0.1 {
 			ratio = 0.1
 		}
-		w.adjustResubmitInterval(&intervalAdjust{
+		w.resubmitAdjustCh <- &intervalAdjust{
 			ratio: ratio,
 			inc:   true,
-		})
+		}
 
 	case errors.Is(err, errBlockInterruptedByNewHead):
 		// If the block building is interrupted by newhead event, discard it
@@ -1185,15 +1167,6 @@ func (w *worker) getSealingBlock(params *generateParams) *newPayloadResult {
 func (w *worker) isTTDReached(header *types.Header) bool {
 	td, ttd := w.chain.GetTd(header.ParentHash, header.Number.Uint64()-1), w.chain.Config().TerminalTotalDifficulty
 	return td != nil && ttd != nil && td.Cmp(ttd) >= 0
-}
-
-// adjustResubmitInterval adjusts the resubmit interval.
-func (w *worker) adjustResubmitInterval(message *intervalAdjust) {
-	select {
-	case w.resubmitAdjustCh <- message:
-	default:
-		log.Warn("the resubmitAdjustCh is full, discard the message")
-	}
 }
 
 // copyReceipts makes a deep copy of the given receipts.

@@ -19,8 +19,8 @@ package eth
 import (
 	"bytes"
 	"fmt"
+	"math/big"
 	"reflect"
-	"strings"
 	"testing"
 
 	"github.com/davecgh/go-spew/spew"
@@ -30,14 +30,13 @@ import (
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/trie"
-	"github.com/holiman/uint256"
 	"golang.org/x/exp/slices"
 )
 
 var dumper = spew.ConfigState{Indent: "    "}
 
-func accountRangeTest(t *testing.T, trie *state.Trie, statedb *state.StateDB, start common.Hash, requestedNum int, expectedNum int) state.Dump {
-	result := statedb.RawDump(&state.DumpConfig{
+func accountRangeTest(t *testing.T, trie *state.Trie, statedb *state.StateDB, start common.Hash, requestedNum int, expectedNum int) state.IteratorDump {
+	result := statedb.IteratorDump(&state.DumpConfig{
 		SkipCode:          true,
 		SkipStorage:       true,
 		OnlyWithAddresses: false,
@@ -48,12 +47,12 @@ func accountRangeTest(t *testing.T, trie *state.Trie, statedb *state.StateDB, st
 	if len(result.Accounts) != expectedNum {
 		t.Fatalf("expected %d results, got %d", expectedNum, len(result.Accounts))
 	}
-	for addr, acc := range result.Accounts {
-		if strings.HasSuffix(addr, "pre") || acc.Address == nil {
-			t.Fatalf("account without prestate (address) returned: %v", addr)
+	for address := range result.Accounts {
+		if address == (common.Address{}) {
+			t.Fatalf("empty address returned")
 		}
-		if !statedb.Exist(*acc.Address) {
-			t.Fatalf("account not found in state %s", acc.Address.Hex())
+		if !statedb.Exist(address) {
+			t.Fatalf("account not found in state %s", address.Hex())
 		}
 	}
 	return result
@@ -73,7 +72,7 @@ func TestAccountRange(t *testing.T) {
 		hash := common.HexToHash(fmt.Sprintf("%x", i))
 		addr := common.BytesToAddress(crypto.Keccak256Hash(hash.Bytes()).Bytes())
 		addrs[i] = addr
-		sdb.SetBalance(addrs[i], uint256.NewInt(1))
+		sdb.SetBalance(addrs[i], big.NewInt(1))
 		if _, ok := m[addr]; ok {
 			t.Fatalf("bad")
 		} else {
@@ -93,16 +92,16 @@ func TestAccountRange(t *testing.T) {
 	secondResult := accountRangeTest(t, &trie, sdb, common.BytesToHash(firstResult.Next), AccountRangeMaxResults, AccountRangeMaxResults)
 
 	hList := make([]common.Hash, 0)
-	for addr1, acc := range firstResult.Accounts {
-		// If address is non-available, then it makes no sense to compare
+	for addr1 := range firstResult.Accounts {
+		// If address is empty, then it makes no sense to compare
 		// them as they might be two different accounts.
-		if acc.Address == nil {
+		if addr1 == (common.Address{}) {
 			continue
 		}
 		if _, duplicate := secondResult.Accounts[addr1]; duplicate {
 			t.Fatalf("pagination test failed:  results should not overlap")
 		}
-		hList = append(hList, crypto.Keccak256Hash(acc.Address.Bytes()))
+		hList = append(hList, crypto.Keccak256Hash(addr1.Bytes()))
 	}
 	// Test to see if it's possible to recover from the middle of the previous
 	// set and get an even split between the first and second sets.
@@ -141,7 +140,7 @@ func TestEmptyAccountRange(t *testing.T) {
 	st.Commit(0, true)
 	st, _ = state.New(types.EmptyRootHash, statedb, nil)
 
-	results := st.RawDump(&state.DumpConfig{
+	results := st.IteratorDump(&state.DumpConfig{
 		SkipCode:          true,
 		SkipStorage:       true,
 		OnlyWithAddresses: true,

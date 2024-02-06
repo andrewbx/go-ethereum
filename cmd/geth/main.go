@@ -14,7 +14,7 @@
 // You should have received a copy of the GNU General Public License
 // along with go-ethereum. If not, see <http://www.gnu.org/licenses/>.
 
-// geth is a command-line client for Ethereum.
+// geth is the official command-line client for Ethereum.
 package main
 
 import (
@@ -62,7 +62,7 @@ var (
 		utils.MinFreeDiskSpaceFlag,
 		utils.KeyStoreDirFlag,
 		utils.ExternalSignerFlag,
-		utils.NoUSBFlag, // deprecated
+		utils.NoUSBFlag,
 		utils.USBFlag,
 		utils.SmartCardDaemonPathFlag,
 		utils.OverrideCancun,
@@ -87,24 +87,24 @@ var (
 		utils.ExitWhenSyncedFlag,
 		utils.GCModeFlag,
 		utils.SnapshotFlag,
-		utils.TxLookupLimitFlag, // deprecated
+		utils.TxLookupLimitFlag,
 		utils.TransactionHistoryFlag,
 		utils.StateHistoryFlag,
-		utils.LightServeFlag,    // deprecated
-		utils.LightIngressFlag,  // deprecated
-		utils.LightEgressFlag,   // deprecated
-		utils.LightMaxPeersFlag, // deprecated
-		utils.LightNoPruneFlag,  // deprecated
+		utils.LightServeFlag,
+		utils.LightIngressFlag,
+		utils.LightEgressFlag,
+		utils.LightMaxPeersFlag,
+		utils.LightNoPruneFlag,
 		utils.LightKDFFlag,
-		utils.LightNoSyncServeFlag, // deprecated
+		utils.LightNoSyncServeFlag,
 		utils.EthRequiredBlocksFlag,
-		utils.LegacyWhitelistFlag, // deprecated
+		utils.LegacyWhitelistFlag,
 		utils.BloomFilterSizeFlag,
 		utils.CacheFlag,
 		utils.CacheDatabaseFlag,
 		utils.CacheTrieFlag,
-		utils.CacheTrieJournalFlag,   // deprecated
-		utils.CacheTrieRejournalFlag, // deprecated
+		utils.CacheTrieJournalFlag,
+		utils.CacheTrieRejournalFlag,
 		utils.CacheGCFlag,
 		utils.CacheSnapshotFlag,
 		utils.CacheNoPrefetchFlag,
@@ -127,7 +127,7 @@ var (
 		utils.NoDiscoverFlag,
 		utils.DiscoveryV4Flag,
 		utils.DiscoveryV5Flag,
-		utils.LegacyDiscoveryV5Flag, // deprecated
+		utils.LegacyDiscoveryV5Flag,
 		utils.NetrestrictFlag,
 		utils.NodeKeyFileFlag,
 		utils.NodeKeyHexFlag,
@@ -144,8 +144,6 @@ var (
 		utils.GpoMaxGasPriceFlag,
 		utils.GpoIgnoreGasPriceFlag,
 		configFileFlag,
-		utils.LogDebugFlag,
-		utils.LogBacktraceAtFlag,
 	}, utils.NetworkFlags, utils.DatabaseFlags)
 
 	rpcFlags = []cli.Flag{
@@ -203,12 +201,14 @@ var app = flags.NewApp("the go-ethereum command line interface")
 func init() {
 	// Initialize the CLI app and start Geth
 	app.Action = geth
+	app.Copyright = "Copyright 2013-2023 The go-ethereum Authors"
 	app.Commands = []*cli.Command{
 		// See chaincmd.go:
 		initCommand,
 		importCommand,
 		exportCommand,
 		importPreimagesCommand,
+		exportPreimagesCommand,
 		removedbCommand,
 		dumpCommand,
 		dumpGenesisCommand,
@@ -276,6 +276,9 @@ func main() {
 func prepare(ctx *cli.Context) {
 	// If we're running a known preset, log it for convenience.
 	switch {
+	case ctx.IsSet(utils.PulseChainFlag.Name):
+		log.Info("Starting Geth on PulseChain mainnet...")
+
 	case ctx.IsSet(utils.GoerliFlag.Name):
 		log.Info("Starting Geth on Görli testnet...")
 
@@ -284,6 +287,9 @@ func prepare(ctx *cli.Context) {
 
 	case ctx.IsSet(utils.HoleskyFlag.Name):
 		log.Info("Starting Geth on Holesky testnet...")
+
+	case ctx.IsSet(utils.PulseChainTestnetV4Flag.Name):
+		log.Info("Starting Geth on PulseChain Testnet V4...")
 
 	case ctx.IsSet(utils.DeveloperFlag.Name):
 		log.Info("Starting Geth in ephemeral dev mode...")
@@ -307,16 +313,21 @@ func prepare(ctx *cli.Context) {
 		log.Info("Starting Geth on Ethereum mainnet...")
 	}
 	// If we're a full node on mainnet without --cache specified, bump default cache allowance
-	if !ctx.IsSet(utils.CacheFlag.Name) && !ctx.IsSet(utils.NetworkIdFlag.Name) {
+	if ctx.String(utils.SyncModeFlag.Name) != "light" && !ctx.IsSet(utils.CacheFlag.Name) && !ctx.IsSet(utils.NetworkIdFlag.Name) {
 		// Make sure we're not on any supported preconfigured testnet either
 		if !ctx.IsSet(utils.HoleskyFlag.Name) &&
 			!ctx.IsSet(utils.SepoliaFlag.Name) &&
 			!ctx.IsSet(utils.GoerliFlag.Name) &&
 			!ctx.IsSet(utils.DeveloperFlag.Name) {
-			// Nope, we're really on mainnet. Bump that cache up!
+			// Nope, we're really on mainnet or PulseChain. Bump that cache up!
 			log.Info("Bumping default cache on mainnet", "provided", ctx.Int(utils.CacheFlag.Name), "updated", 4096)
 			ctx.Set(utils.CacheFlag.Name, strconv.Itoa(4096))
 		}
+	}
+	// If we're running a light client on any network, drop the cache to some meaningfully low amount
+	if ctx.String(utils.SyncModeFlag.Name) == "light" && !ctx.IsSet(utils.CacheFlag.Name) {
+		log.Info("Dropping default light client cache", "provided", ctx.Int(utils.CacheFlag.Name), "updated", 128)
+		ctx.Set(utils.CacheFlag.Name, strconv.Itoa(128))
 	}
 
 	// Start metrics export if enabled

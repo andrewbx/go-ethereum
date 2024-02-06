@@ -29,7 +29,6 @@ import (
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/common/prque"
 	"github.com/ethereum/go-ethereum/core/types"
-	"github.com/ethereum/go-ethereum/crypto/kzg4844"
 	"github.com/ethereum/go-ethereum/log"
 	"github.com/ethereum/go-ethereum/metrics"
 	"github.com/ethereum/go-ethereum/params"
@@ -811,7 +810,7 @@ func (q *queue) DeliverBodies(id string, txLists [][]*types.Transaction, txListH
 					return errInvalidBody
 				}
 				for _, hash := range tx.BlobHashes() {
-					if !kzg4844.IsValidVersionedHash(hash[:]) {
+					if hash[0] != params.BlobTxHashVersion {
 						return errInvalidBody
 					}
 				}

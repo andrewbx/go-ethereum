@@ -21,7 +21,6 @@ import (
 	"math/big"
 
 	"github.com/ethereum/go-ethereum/common"
-	"github.com/ethereum/go-ethereum/params/forks"
 )
 
 // Genesis hashes to enforce below configs on.
@@ -82,7 +81,6 @@ var (
 		TerminalTotalDifficultyPassed: true,
 		MergeNetsplitBlock:            nil,
 		ShanghaiTime:                  newUint64(1696000704),
-		CancunTime:                    newUint64(1707305664),
 		Ethash:                        new(EthashConfig),
 	}
 	// SepoliaChainConfig contains the chain parameters to run a node on the Sepolia test network.
@@ -107,7 +105,6 @@ var (
 		TerminalTotalDifficultyPassed: true,
 		MergeNetsplitBlock:            big.NewInt(1735371),
 		ShanghaiTime:                  newUint64(1677557088),
-		CancunTime:                    newUint64(1706655072),
 		Ethash:                        new(EthashConfig),
 	}
 	// GoerliChainConfig contains the chain parameters to run a node on the Görli test network.
@@ -130,7 +127,6 @@ var (
 		TerminalTotalDifficulty:       big.NewInt(10_790_000),
 		TerminalTotalDifficultyPassed: true,
 		ShanghaiTime:                  newUint64(1678832736),
-		CancunTime:                    newUint64(1705473120),
 		Clique: &CliqueConfig{
 			Period: 15,
 			Epoch:  30000,
@@ -184,6 +180,7 @@ var (
 		ShanghaiTime:                  newUint64(0),
 		TerminalTotalDifficulty:       big.NewInt(0),
 		TerminalTotalDifficultyPassed: true,
+		IsDevMode:                     true,
 	}
 
 	// AllCliqueProtocolChanges contains every protocol change (EIPs) introduced
@@ -242,36 +239,6 @@ var (
 		VerkleTime:                    nil,
 		TerminalTotalDifficulty:       nil,
 		TerminalTotalDifficultyPassed: false,
-		Ethash:                        new(EthashConfig),
-		Clique:                        nil,
-	}
-
-	// MergedTestChainConfig contains every protocol change (EIPs) introduced
-	// and accepted by the Ethereum core developers for testing purposes.
-	MergedTestChainConfig = &ChainConfig{
-		ChainID:                       big.NewInt(1),
-		HomesteadBlock:                big.NewInt(0),
-		DAOForkBlock:                  nil,
-		DAOForkSupport:                false,
-		EIP150Block:                   big.NewInt(0),
-		EIP155Block:                   big.NewInt(0),
-		EIP158Block:                   big.NewInt(0),
-		ByzantiumBlock:                big.NewInt(0),
-		ConstantinopleBlock:           big.NewInt(0),
-		PetersburgBlock:               big.NewInt(0),
-		IstanbulBlock:                 big.NewInt(0),
-		MuirGlacierBlock:              big.NewInt(0),
-		BerlinBlock:                   big.NewInt(0),
-		LondonBlock:                   big.NewInt(0),
-		ArrowGlacierBlock:             big.NewInt(0),
-		GrayGlacierBlock:              big.NewInt(0),
-		MergeNetsplitBlock:            big.NewInt(0),
-		ShanghaiTime:                  newUint64(0),
-		CancunTime:                    newUint64(0),
-		PragueTime:                    nil,
-		VerkleTime:                    nil,
-		TerminalTotalDifficulty:       big.NewInt(0),
-		TerminalTotalDifficultyPassed: true,
 		Ethash:                        new(EthashConfig),
 		Clique:                        nil,
 	}
@@ -362,8 +329,13 @@ type ChainConfig struct {
 	TerminalTotalDifficultyPassed bool `json:"terminalTotalDifficultyPassed,omitempty"`
 
 	// Various consensus engines
-	Ethash *EthashConfig `json:"ethash,omitempty"`
-	Clique *CliqueConfig `json:"clique,omitempty"`
+	Ethash    *EthashConfig `json:"ethash,omitempty"`
+	Clique    *CliqueConfig `json:"clique,omitempty"`
+	IsDevMode bool          `json:"isDev,omitempty"`
+
+	// PulseChain modifications
+	PrimordialPulseBlock *big.Int  `json:"primordialPulseBlock,omitempty"` // PrimordialPulseBlock switch block (nil = no fork, 0 = already activated)
+	Treasury             *Treasury `json:"treasury,omitempty"`             // An optional treasury which will receive allocations during the PrimordialPulseBlock
 }
 
 // EthashConfig is the consensus engine configs for proof-of-work based sealing.
@@ -442,6 +414,9 @@ func (c *ChainConfig) Description() string {
 	}
 	if c.GrayGlacierBlock != nil {
 		banner += fmt.Sprintf(" - Gray Glacier:                #%-8v (https://github.com/ethereum/execution-specs/blob/master/network-upgrades/mainnet-upgrades/gray-glacier.md)\n", c.GrayGlacierBlock)
+	}
+	if c.PrimordialPulseBlock != nil {
+		banner += fmt.Sprintf(" - Primordial Pulse:            #%-8v (https://gitlab.com/pulsechaincom/go-pulse)\n", c.PrimordialPulseBlock)
 	}
 	banner += "\n"
 
@@ -559,7 +534,15 @@ func (c *ChainConfig) IsTerminalPoWBlock(parentTotalDiff *big.Int, totalDiff *bi
 
 // IsShanghai returns whether time is either equal to the Shanghai fork time or greater.
 func (c *ChainConfig) IsShanghai(num *big.Int, time uint64) bool {
-	return c.IsLondon(num) && isTimestampForked(c.ShanghaiTime, time)
+	if !c.IsLondon(num) {
+		return false
+	}
+	if c.PrimordialPulseAhead(num) {
+		// If the PrimordialPulse fork is ahead,
+		// compare with the Ethereum Mainnet Shanghai time.
+		return 1681338455 <= time
+	}
+	return isTimestampForked(c.ShanghaiTime, time)
 }
 
 // IsCancun returns whether num is either equal to the Cancun fork time or greater.
@@ -575,6 +558,17 @@ func (c *ChainConfig) IsPrague(num *big.Int, time uint64) bool {
 // IsVerkle returns whether num is either equal to the Verkle fork time or greater.
 func (c *ChainConfig) IsVerkle(num *big.Int, time uint64) bool {
 	return c.IsLondon(num) && isTimestampForked(c.VerkleTime, time)
+}
+
+// IsPrimordialPulseBlock returns whether or not the given block is the primordial pulse block.
+func (c *ChainConfig) IsPrimordialPulseBlock(num *big.Int) bool {
+	// Returns whether or not the given block is the PrimordialPulseBlock.
+	return c.PrimordialPulseBlock != nil && c.PrimordialPulseBlock.Cmp(num) == 0
+}
+
+// Returns true if there is a PrimordialPulse block in the future.
+func (c *ChainConfig) PrimordialPulseAhead(num *big.Int) bool {
+	return c.PrimordialPulseBlock != nil && c.PrimordialPulseBlock.Cmp(num) > 0
 }
 
 // CheckCompatible checks whether scheduled fork transitions have been imported
@@ -689,7 +683,8 @@ func (c *ChainConfig) checkCompatible(newcfg *ChainConfig, headNumber *big.Int, 
 	if isForkBlockIncompatible(c.EIP158Block, newcfg.EIP158Block, headNumber) {
 		return newBlockCompatError("EIP158 fork block", c.EIP158Block, newcfg.EIP158Block)
 	}
-	if c.IsEIP158(headNumber) && !configBlockEqual(c.ChainID, newcfg.ChainID) {
+	// allow mismatching ChainID if there is a PrimordialPulse block ahead
+	if c.IsEIP158(headNumber) && !configBlockEqual(c.ChainID, newcfg.ChainID) && !newcfg.PrimordialPulseAhead(headNumber) {
 		return newBlockCompatError("EIP158 chain ID", c.EIP158Block, newcfg.EIP158Block)
 	}
 	if isForkBlockIncompatible(c.ByzantiumBlock, newcfg.ByzantiumBlock, headNumber) {
@@ -726,7 +721,8 @@ func (c *ChainConfig) checkCompatible(newcfg *ChainConfig, headNumber *big.Int, 
 	if isForkBlockIncompatible(c.MergeNetsplitBlock, newcfg.MergeNetsplitBlock, headNumber) {
 		return newBlockCompatError("Merge netsplit fork block", c.MergeNetsplitBlock, newcfg.MergeNetsplitBlock)
 	}
-	if isForkTimestampIncompatible(c.ShanghaiTime, newcfg.ShanghaiTime, headTimestamp) {
+	// allow mismatching Shanghai time if we're on the PrimordialPulse block or if there is a PrimordialPulse block ahead
+	if isForkTimestampIncompatible(c.ShanghaiTime, newcfg.ShanghaiTime, headTimestamp) && !newcfg.IsPrimordialPulseBlock(headNumber) && !newcfg.PrimordialPulseAhead(headNumber) {
 		return newTimestampCompatError("Shanghai fork timestamp", c.ShanghaiTime, newcfg.ShanghaiTime)
 	}
 	if isForkTimestampIncompatible(c.CancunTime, newcfg.CancunTime, headTimestamp) {
@@ -737,6 +733,9 @@ func (c *ChainConfig) checkCompatible(newcfg *ChainConfig, headNumber *big.Int, 
 	}
 	if isForkTimestampIncompatible(c.VerkleTime, newcfg.VerkleTime, headTimestamp) {
 		return newTimestampCompatError("Verkle fork timestamp", c.VerkleTime, newcfg.VerkleTime)
+	}
+	if isForkBlockIncompatible(c.PrimordialPulseBlock, newcfg.PrimordialPulseBlock, headNumber) {
+		return newBlockCompatError("PrimordialPulse fork block", c.PrimordialPulseBlock, newcfg.PrimordialPulseBlock)
 	}
 	return nil
 }
@@ -749,23 +748,6 @@ func (c *ChainConfig) BaseFeeChangeDenominator() uint64 {
 // ElasticityMultiplier bounds the maximum gas limit an EIP-1559 block may have.
 func (c *ChainConfig) ElasticityMultiplier() uint64 {
 	return DefaultElasticityMultiplier
-}
-
-// LatestFork returns the latest time-based fork that would be active for the given time.
-func (c *ChainConfig) LatestFork(time uint64) forks.Fork {
-	// Assume last non-time-based fork has passed.
-	london := c.LondonBlock
-
-	switch {
-	case c.IsPrague(london, time):
-		return forks.Prague
-	case c.IsCancun(london, time):
-		return forks.Cancun
-	case c.IsShanghai(london, time):
-		return forks.Shanghai
-	default:
-		return forks.Paris
-	}
 }
 
 // isForkBlockIncompatible returns true if a fork scheduled at block s1 cannot be

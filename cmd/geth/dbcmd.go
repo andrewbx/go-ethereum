@@ -43,22 +43,12 @@ import (
 )
 
 var (
-	removeStateDataFlag = &cli.BoolFlag{
-		Name:  "remove.state",
-		Usage: "If set, selects the state data for removal",
-	}
-	removeChainDataFlag = &cli.BoolFlag{
-		Name:  "remove.chain",
-		Usage: "If set, selects the state data for removal",
-	}
-
 	removedbCommand = &cli.Command{
 		Action:    removeDB,
 		Name:      "removedb",
 		Usage:     "Remove blockchain and state databases",
 		ArgsUsage: "",
-		Flags: flags.Merge(utils.DatabaseFlags,
-			[]cli.Flag{removeStateDataFlag, removeChainDataFlag}),
+		Flags:     utils.DatabaseFlags,
 		Description: `
 Remove blockchain and state databases`,
 	}
@@ -208,85 +198,60 @@ WARNING: This is a low-level operation which may cause database corruption!`,
 func removeDB(ctx *cli.Context) error {
 	stack, config := makeConfigNode(ctx)
 
-	// Resolve folder paths.
-	var (
-		rootDir    = stack.ResolvePath("chaindata")
-		ancientDir = config.Eth.DatabaseFreezer
-	)
-	switch {
-	case ancientDir == "":
-		ancientDir = filepath.Join(stack.ResolvePath("chaindata"), "ancient")
-	case !filepath.IsAbs(ancientDir):
-		ancientDir = config.Node.ResolvePath(ancientDir)
+	// Remove the full node state database
+	path := stack.ResolvePath("chaindata")
+	if common.FileExist(path) {
+		confirmAndRemoveDB(path, "full node state database")
+	} else {
+		log.Info("Full node state database missing", "path", path)
 	}
-	// Delete state data
-	statePaths := []string{rootDir, filepath.Join(ancientDir, rawdb.StateFreezerName)}
-	confirmAndRemoveDB(statePaths, "state data", ctx, removeStateDataFlag.Name)
-
-	// Delete ancient chain
-	chainPaths := []string{filepath.Join(ancientDir, rawdb.ChainFreezerName)}
-	confirmAndRemoveDB(chainPaths, "ancient chain", ctx, removeChainDataFlag.Name)
+	// Remove the full node ancient database
+	path = config.Eth.DatabaseFreezer
+	switch {
+	case path == "":
+		path = filepath.Join(stack.ResolvePath("chaindata"), "ancient")
+	case !filepath.IsAbs(path):
+		path = config.Node.ResolvePath(path)
+	}
+	if common.FileExist(path) {
+		confirmAndRemoveDB(path, "full node ancient database")
+	} else {
+		log.Info("Full node ancient database missing", "path", path)
+	}
+	// Remove the light node database
+	path = stack.ResolvePath("lightchaindata")
+	if common.FileExist(path) {
+		confirmAndRemoveDB(path, "light node database")
+	} else {
+		log.Info("Light node database missing", "path", path)
+	}
 	return nil
 }
 
-// removeFolder deletes all files (not folders) inside the directory 'dir' (but
-// not files in subfolders).
-func removeFolder(dir string) {
-	filepath.Walk(dir, func(path string, info os.FileInfo, err error) error {
-		// If we're at the top level folder, recurse into
-		if path == dir {
-			return nil
-		}
-		// Delete all the files, but not subfolders
-		if !info.IsDir() {
-			os.Remove(path)
-			return nil
-		}
-		return filepath.SkipDir
-	})
-}
-
 // confirmAndRemoveDB prompts the user for a last confirmation and removes the
-// list of folders if accepted.
-func confirmAndRemoveDB(paths []string, kind string, ctx *cli.Context, removeFlagName string) {
-	var (
-		confirm bool
-		err     error
-	)
-	msg := fmt.Sprintf("Location(s) of '%s': \n", kind)
-	for _, path := range paths {
-		msg += fmt.Sprintf("\t- %s\n", path)
-	}
-	fmt.Println(msg)
-	if ctx.IsSet(removeFlagName) {
-		confirm = ctx.Bool(removeFlagName)
-		if confirm {
-			fmt.Printf("Remove '%s'? [y/n] y\n", kind)
-		} else {
-			fmt.Printf("Remove '%s'? [y/n] n\n", kind)
-		}
-	} else {
-		confirm, err = prompt.Stdin.PromptConfirm(fmt.Sprintf("Remove '%s'?", kind))
-	}
+// folder if accepted.
+func confirmAndRemoveDB(database string, kind string) {
+	confirm, err := prompt.Stdin.PromptConfirm(fmt.Sprintf("Remove %s (%s)?", kind, database))
 	switch {
 	case err != nil:
 		utils.Fatalf("%v", err)
 	case !confirm:
-		log.Info("Database deletion skipped", "kind", kind, "paths", paths)
+		log.Info("Database deletion skipped", "path", database)
 	default:
-		var (
-			deleted []string
-			start   = time.Now()
-		)
-		for _, path := range paths {
-			if common.FileExist(path) {
-				removeFolder(path)
-				deleted = append(deleted, path)
-			} else {
-				log.Info("Folder is not existent", "path", path)
+		start := time.Now()
+		filepath.Walk(database, func(path string, info os.FileInfo, err error) error {
+			// If we're at the top level folder, recurse into
+			if path == database {
+				return nil
 			}
-		}
-		log.Info("Database successfully deleted", "kind", kind, "paths", deleted, "elapsed", common.PrettyDuration(time.Since(start)))
+			// Delete all the files, but not subfolders
+			if !info.IsDir() {
+				os.Remove(path)
+				return nil
+			}
+			return filepath.SkipDir
+		})
+		log.Info("Database successfully deleted", "path", database, "elapsed", common.PrettyDuration(time.Since(start)))
 	}
 }
 
@@ -517,7 +482,7 @@ func dbDumpTrie(ctx *cli.Context) error {
 	db := utils.MakeChainDatabase(ctx, stack, true)
 	defer db.Close()
 
-	triedb := utils.MakeTrieDatabase(ctx, db, false, true, false)
+	triedb := utils.MakeTrieDatabase(ctx, db, false, true)
 	defer triedb.Close()
 
 	var (

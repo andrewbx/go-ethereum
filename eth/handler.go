@@ -178,10 +178,6 @@ func newHandler(config *handlerConfig) (*handler, error) {
 			log.Info("Enabled snap sync", "head", head.Number, "hash", head.Hash())
 		}
 	}
-	// If snap sync is requested but snapshots are disabled, fail loudly
-	if h.snapSync.Load() && config.Chain.Snapshots() == nil {
-		return nil, errors.New("snap sync not supported with snapshots disabled")
-	}
 	// Construct the downloader (long sync)
 	h.downloader = downloader.New(config.Database, h.eventMux, h.chain, nil, h.removePeer, h.enableSyncedFeatures)
 	if ttd := h.chain.Config().TerminalTotalDifficulty; ttd != nil {
@@ -215,7 +211,7 @@ func newHandler(config *handlerConfig) (*handler, error) {
 				return errors.New("unexpected post-merge header")
 			}
 		}
-		return h.chain.Engine().VerifyHeader(h.chain, header)
+		return h.chain.Engine().VerifyHeader(h.chain, header, nil)
 	}
 	heighter := func() uint64 {
 		return h.chain.CurrentBlock().Number.Uint64()
